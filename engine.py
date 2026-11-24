@@ -40,6 +40,8 @@ class Engine:
             "online_since": 0.0,
             "login_count": 0,
             "busy": False,
+            "auth_error": False,
+            "auth_error_msg": "",
         }
         store.ensure_dirs()
         self.log("程序已启动，配置目录：" + store.DATA_DIR, "info")
@@ -165,6 +167,7 @@ class Engine:
                 self._fail_count = 0
                 self._next_attempt = 0.0
                 self._patch(phase="online", authenticated=True, busy=False,
+                            auth_error=False, auth_error_msg="",
                             last_login=time.time(), internet=True, portal_reachable=True,
                             message=result.get("msg", "认证成功"),
                             login_count=self.state["login_count"] + 1)
@@ -178,6 +181,7 @@ class Engine:
                 self._fail_count += 1
                 backoff = min(300, 15 * (2 ** max(0, self._fail_count - 1)))
                 self._next_attempt = time.time() + backoff
+                self._patch(auth_error=True, auth_error_msg=result.get("msg") or "认证失败")
                 if self.state.get("authenticated"):
                     self._patch(phase="online", busy=False, message=f"{result.get('msg')}（当前认证仍有效）")
                     self.log(f"认证失败：{result.get('msg')}；当前会话仍在线", "warn")

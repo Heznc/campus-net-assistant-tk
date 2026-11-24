@@ -472,6 +472,7 @@ class RoundedEntry(tk.Canvas):
         self._ph_text = ""
         self._ph_color = T3
         self._ph.bind("<Button-1>", lambda e: self.entry.focus_set())
+        self.bind("<Button-1>", lambda e: self.entry.focus_set())
         for ev in ("<FocusIn>", "<FocusOut>", "<KeyRelease>"):
             self.entry.bind(ev, lambda e: self._sync_ph(), add="+")
         self.bind("<Configure>", self._resize)
@@ -494,7 +495,8 @@ class RoundedEntry(tk.Canvas):
         self._sync_ph()
 
     def _sync_ph(self):
-        show = bool(self._ph_text) and not self.entry.get()
+        show = (bool(self._ph_text) and not self.entry.get()
+                and self.focus_get() is not self.entry)
         self.itemconfigure(self._ph_win, state="normal" if show else "hidden")
         if show:
             self.tag_raise(self._ph_win)
@@ -965,6 +967,8 @@ class App(tk.Tk):
         self._grip = None
         self._round_job = None
         self._saving = False
+        self._baseline = None
+        self._last_error_msg = ""
         self._min_size = (900, 560)
         self.minsize(*self._min_size)
 
@@ -1144,8 +1148,12 @@ class App(tk.Tk):
     def _start_tray(self):
         def state_fn():
             st = self.engine.state
-            key = "online" if st.get("authenticated") else {
-                "offline": "offline", "error": "error"}.get(st.get("phase"), "idle")
+            if st.get("authenticated"):
+                key = "online"
+            elif st.get("auth_error"):
+                key = "error"
+            else:
+                key = {"offline": "offline", "error": "error"}.get(st.get("phase"), "idle")
             return key, f"校园网助手 · {'已认证' if key == 'online' else '待认证'} · {st.get('ip') or '—'}", \
                 bool(self.engine.cfg.get("auto_login"))
 
@@ -1875,7 +1883,43 @@ class App(tk.Tk):
             text=f"● {state_text}",
             fg="#5fd38d" if st["authenticated"] else
                ("#e7c46b" if st["portal_reachable"] else T3_D))
+        self._notify_auth_error(st)
         self._render_logs()
+
+    def _notify_auth_error(self, st):
+        """认证失败时弹一次右下角通知（同一条错误只弹一次）。"""
+        msg = st.get("auth_error_msg") or ""
+        if not (st.get("auth_error") and msg) or msg == self._last_error_msg:
+            return
+        self._last_error_msg = msg
+        if self._tray is not None and getattr(self._tray, "ok", False):
+            self._notify("认证失败", msg)
+        else:
+            self._toast("认证失败", msg)
+
+    def _toast(self, title, text, timeout=6000):
+        """没有托盘时的兜底：右下角自绘提示。"""
+        try:
+            if getattr(self, "_toast_win", None) is not None:
+                self._toast_win.destroy()
+        except Exception:                               # noqa: BLE001
+            pass
+        win = tk.Toplevel(self)
+        self._toast_win = win
+        win.overrideredirect(True)
+        win.configure(bg=MID)
+        win.attributes("-topmost", True)
+        wrap = tk.Frame(win, bg=MID, padx=16, pady=12)
+        wrap.pack(fill="both", expand=True)
+        tk.Label(wrap, text=title, bg=MID, fg="#ff6b60", font=(FONT, 11, "bold"),
+                 anchor="w").pack(fill="x")
+        tk.Label(wrap, text=text, bg=MID, fg=T2, font=F_SMALL, anchor="w",
+                 justify="left", wraplength=280).pack(fill="x", pady=(4, 0))
+        win.update_idletasks()
+        w, h = max(300, win.winfo_reqwidth()), win.winfo_reqheight()
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        win.geometry("%dx%d+%d+%d" % (w, h, sw - w - 24, sh - h - 60))
+        win.after(timeout, win.destroy)
 
     def _render_logs(self, full=False):
         widget = self._ov_log.text if not full else self._log_view.text
