@@ -79,6 +79,13 @@ T1_D, T2_D, T3_D = blend(DEEP, .95), blend(DEEP, .70), blend(DEEP, .40)
 T1_S, T2_S, T3_S = blend(SURFACE, .95), blend(SURFACE, .70), blend(SURFACE, .40)
 
 # 统一系统黑体，仅用字重区分层级（无版权风险）
+# 只用系统已安装的字体，按优先级挑第一个可用的（仓库不打包任何字体文件）
+FONT_CANDIDATES = (
+    "Microsoft YaHei UI", "Microsoft YaHei",   # Windows 中文
+    "PingFang SC", "Hiragino Sans GB",         # macOS
+    "Noto Sans CJK SC", "Source Han Sans SC",  # Linux / 开源自选
+    "Segoe UI", "TkDefaultFont",
+)
 FONT = "Microsoft YaHei UI"
 F_BODY = (FONT, 10)
 F_BODY_B = (FONT, 10, "bold")
@@ -87,6 +94,26 @@ F_SMALL_B = (FONT, 9, "bold")
 F_TITLE = (FONT, 20, "bold")
 F_HEAD = (FONT, 13, "bold")
 F_BTN = (FONT, 10, "bold")
+
+
+def init_fonts(root) -> str:
+    """挑一个本机存在的无衬线字体（不引用、不打包任何字体文件）。"""
+    global FONT, F_BODY, F_BODY_B, F_SMALL, F_SMALL_B, F_TITLE, F_HEAD, F_BTN
+    try:
+        from tkinter import font as tkfont
+        available = set(tkfont.families(root))
+    except Exception:                                   # noqa: BLE001
+        available = set()
+    chosen = next((f for f in FONT_CANDIDATES if f in available), FONT_CANDIDATES[0])
+    FONT = chosen
+    F_BODY = (FONT, 10)
+    F_BODY_B = (FONT, 10, "bold")
+    F_SMALL = (FONT, 9)
+    F_SMALL_B = (FONT, 9, "bold")
+    F_TITLE = (FONT, 20, "bold")
+    F_HEAD = (FONT, 13, "bold")
+    F_BTN = (FONT, 10, "bold")
+    return chosen
 
 
 try:
@@ -884,6 +911,7 @@ class App(tk.Tk):
         self._sig = None
         self._last_seq = 0
         self._tray = None
+        init_fonts(self)
         self.theme_mode = str(engine.cfg.get("theme", "system"))
         set_palette(resolve_theme(self.theme_mode))
         self._pending_interval = int(engine.cfg.get("interval", 20))
