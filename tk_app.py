@@ -335,17 +335,27 @@ class Button(tk.Canvas):
 
 
 class RoundedEntry(tk.Canvas):
-    """AA 圆角输入框：Canvas 圆角底 + 同色 Entry 内嵌。"""
+    """AA 圆角输入框：Canvas 圆角底 + 同色 Entry 内嵌 + 占位提示（幽灵文字）。"""
 
     def __init__(self, master, *, bg=SURFACE, fill=MID, radius=RADIUS_CTRL,
                  height=36, show=None, fg=None, justify="left"):
         super().__init__(master, bg=bg, height=height, highlightthickness=0, bd=0, takefocus=0)
         self._fill = fill
         self._radius = radius
+        self._secret = bool(show)
         self.entry = tk.Entry(self, bg=fill, fg=fg or T1, font=F_BODY, bd=0,
                               relief="flat", highlightthickness=0, justify=justify,
                               insertbackground=T1, show=show or "")
         self._win = self.create_window(12, height // 2, window=self.entry, anchor="w")
+        # 占位提示：单独的 Label 盖在 Entry 上（后创建的窗口项在上层）
+        self._ph = tk.Label(self, text="", bg=fill, fg=T3, font=F_BODY, anchor="w")
+        self._ph_win = self.create_window(12, height // 2, window=self._ph, anchor="w",
+                                          state="hidden")
+        self._ph_text = ""
+        self._ph_color = T3
+        self._ph.bind("<Button-1>", lambda e: self.entry.focus_set())
+        for ev in ("<FocusIn>", "<FocusOut>", "<KeyRelease>"):
+            self.entry.bind(ev, lambda e: self._sync_ph(), add="+")
         self.bind("<Configure>", self._resize)
 
     def _resize(self, event):
@@ -354,19 +364,39 @@ class RoundedEntry(tk.Canvas):
         draw_round(self, 0, 0, w, h, self._radius, self._fill, tag="bgshape")
         self.tag_lower("bgshape")
         self.itemconfigure(self._win, width=max(10, w - 24), height=h - 10)
+        self.itemconfigure(self._ph_win, width=max(10, w - 26), height=h - 10)
+        self.itemconfigure(self._win, state="normal")
 
+    # 占位提示
+    def set_placeholder(self, text: str, color: str | None = None):
+        self._ph_text = text or ""
+        if color:
+            self._ph_color = color
+        self._ph.configure(text=self._ph_text, fg=self._ph_color)
+        self._sync_ph()
+
+    def _sync_ph(self):
+        show = bool(self._ph_text) and not self.entry.get()
+        self.itemconfigure(self._ph_win, state="normal" if show else "hidden")
+        if show:
+            self.tag_raise(self._ph_win)
+
+    # 代理常用方法
     def get(self):
         return self.entry.get()
 
     def set(self, text):
         self.entry.delete(0, "end")
         self.entry.insert(0, text)
+        self._sync_ph()
 
     def clear(self):
         self.entry.delete(0, "end")
+        self._sync_ph()
 
     def focus(self):
         self.entry.focus_set()
+        self._sync_ph()
 
 
 class RoundedText(tk.Canvas):
@@ -521,6 +551,34 @@ class NavItem(tk.Canvas):
         self._paint()
 
 
+class Spinner(tk.Canvas):
+    """保存中的转圈指示器。"""
+
+    def __init__(self, master, *, bg=SURFACE, size=18, color=ACCENT):
+        super().__init__(master, width=size, height=size, bg=bg,
+                         highlightthickness=0, bd=0, takefocus=0)
+        self._size = size
+        self._color = color
+        self._angle = 0
+        self._job = None
+        self._arc = self.create_arc(3, 3, size - 3, size - 3, start=0, extent=90,
+                                    style="arc", outline=color, width=2)
+
+    def start(self):
+        self.stop()
+        self._spin()
+
+    def _spin(self):
+        self._angle = (self._angle + 24) % 360
+        self.itemconfigure(self._arc, start=self._angle)
+        self._job = self.after(40, self._spin)
+
+    def stop(self):
+        if self._job:
+            self.after_cancel(self._job)
+            self._job = None
+
+
 class IconButton(tk.Canvas):
     """标题栏小按钮：AA 圆角，字符居中。"""
 
@@ -571,6 +629,7 @@ class App(tk.Tk):
         self._grips: dict[str, tk.Frame] = {}
         self._grip = None
         self._round_job = None
+        self._saving = False
         self._min_size = (900, 560)
         self.minsize(*self._min_size)
 
@@ -902,11 +961,13 @@ class App(tk.Tk):
 
         tk.Label(box, text="学号 / 工号", bg=SURFACE, fg=T2_S, font=F_SMALL).pack(anchor="w")
         self.w_user = RoundedEntry(box, bg=SURFACE, fill=MID, height=38)
+        self.w_user.set_placeholder("请输入学号 / 工号")
         self.w_user.configure(width=360)
         self.w_user.pack(fill="x", pady=(4, 12))
 
         tk.Label(box, text="密码", bg=SURFACE, fg=T2_S, font=F_SMALL).pack(anchor="w")
         self.w_pass = RoundedEntry(box, bg=SURFACE, fill=MID, height=38, show="•")
+        self.w_pass.set_placeholder("请输入密码")
         self.w_pass.configure(width=360)
         self.w_pass.pack(fill="x", pady=(4, 6))
 
@@ -1048,17 +1109,20 @@ class App(tk.Tk):
 
         bar = tk.Frame(outer, bg=SURFACE)
         bar.pack(fill="x", padx=16, pady=(2, 2))
-        Button(bar, "保存设置", self._save_settings, bg=SURFACE, fill=ACCENT,
-               accent=True, width=140, height=36).pack(side="right")
+        self.save_spinner = Spinner(bar, bg=SURFACE, size=18)
+        self.save_btn = Button(bar, "保存设置", self._save_settings, bg=SURFACE, fill=ACCENT,
+                               accent=True, width=140, height=36)
+        self.save_btn.pack(side="right")
 
         return scroll
 
     def _field(self, parent, label, *, secret=False):
-        tk.Label(parent, text=label, bg=SURFACE, fg=T2_S, font=F_SMALL,
-                 anchor="w").pack(fill="x", pady=(3, 2))
+        lbl = tk.Label(parent, text=label, bg=SURFACE, fg=T2_S, font=F_SMALL, anchor="w")
+        lbl.pack(fill="x", pady=(3, 2))
         entry = RoundedEntry(parent, bg=SURFACE, fill=MID, height=32,
                              show="•" if secret else None)
         entry.pack(fill="x")
+        entry._lbl = lbl
         return entry
 
     def _field_inline(self, parent, label, value):
@@ -1168,6 +1232,8 @@ class App(tk.Tk):
         return "break"
 
     def _save_settings(self):
+        if self._saving:
+            return
         patch = {
             "user": self.v_user.get().strip(),
             "auto_login": self.v_auto.value,
@@ -1186,17 +1252,58 @@ class App(tk.Tk):
         pw = self.v_pass.get()
         if pw:
             patch["password"] = pw
-        self.engine.update_config(patch)
+
+        self._saving = True
+        self.save_btn.set_enabled(False)
+        self.save_spinner.pack(side="right", padx=(0, 10))
+        self.save_spinner.start()
+
+        self._save_patch, self._save_pw = patch, pw
+        self._save_flag = False
+
+        def work():
+            try:
+                self.engine.update_config(patch)
+            except Exception as exc:                    # noqa: BLE001
+                self.engine.log(f"保存设置失败：{exc}", "error")
+            self._save_flag = True                      # 只置标志，UI 由主线程收尾
+
+        threading.Thread(target=work, daemon=True).start()
+        self.after(80, self._poll_save)
+
+    def _poll_save(self):
+        """主线程轮询：保存完成后收尾（跨线程不直接调 Tk）。"""
+        if not self._save_flag:
+            self.after(80, self._poll_save)
+            return
+        self._save_done(self._save_patch, self._save_pw)
+
+    def _save_done(self, patch, pw):
+        self._saving = False
+        try:
+            self.save_spinner.stop()
+            self.save_spinner.pack_forget()
+            self.save_btn.set_enabled(True)
+        except Exception:                               # noqa: BLE001
+            pass
         self._apply_rounding()
         self.v_pass.clear()
-        if patch["user"] and (pw or self._has_credentials()):
+        if patch.get("user") and (pw or self._has_credentials()):
             self._first_run = False
         self._sync_settings()
         self._refresh()
 
     def _sync_settings(self):
         cfg = self.engine.cfg
+        has_pw = bool(store.unprotect(cfg.get(store._ENC_FIELD, "")))
+        if has_pw:
+            self.v_pass.set_placeholder("•" * 10, blend(SURFACE, .38))
+            self.v_pass._lbl.configure(text="密码   ·   已保存，留空则不修改")
+        else:
+            self.v_pass.set_placeholder("请输入密码", blend(SURFACE, .45))
+            self.v_pass._lbl.configure(text="密码   ·   尚未保存，填写后才能自动认证")
         self.v_user.set(cfg.get("user", ""))
+        self.v_user.set_placeholder("请输入学号 / 工号")
         self.v_base.set(cfg.get("base_url", ""))
         self.v_timeout.set(str(cfg.get("timeout", 6)))
         self.v_retry.set(str(cfg.get("retry", 3)))
