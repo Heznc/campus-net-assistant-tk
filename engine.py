@@ -213,6 +213,8 @@ class Engine:
                         cfg[key] = max(lo, min(hi, int(patch[key])))
                     except (TypeError, ValueError):
                         pass
+            if "win_round" in patch:
+                cfg["win_round"] = "dwm" if str(patch["win_round"]).lower() == "dwm" else "big"
             if "probe_urls" in patch:
                 urls = patch["probe_urls"]
                 if isinstance(urls, str):

@@ -51,6 +51,7 @@ DEFAULTS = {
     "pool": "",                     # 运营商线路（门户未启用时可留空）
     "autostart": False,             # 开机自动运行
     "auto_close": False,            # 关闭窗口时退出程序
+    "win_round": "big",             # 外框圆角：big=大圆角 / dwm=系统抗锯齿
 }
 
 _lock = threading.RLock()
@@ -142,7 +143,7 @@ def load() -> dict:
             pass
         if not isinstance(cfg.get("probe_urls"), list):
             cfg["probe_urls"] = list(DEFAULTS["probe_urls"])
-        cfg["interval"] = max(5, min(600, int(cfg.get("interval") or 20)))
+        cfg["interval"] = max(5, min(3600, int(cfg.get("interval") or 20)))
         cfg["timeout"] = max(2, min(30, int(cfg.get("timeout") or 6)))
         cfg["retry"] = max(1, min(20, int(cfg.get("retry") or 3)))
         return cfg

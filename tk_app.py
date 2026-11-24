@@ -733,6 +733,10 @@ class App(tk.Tk):
                     hwnd, 33, ctypes.byref(pref), ctypes.sizeof(pref))
                 ctypes.windll.user32.SetWindowRgn(hwnd, None, True)
                 return
+            # 关掉 DWM 圆角，避免和区域裁剪叠加
+            pref = ctypes.c_int(1)                      # DWMWCP_DONOTROUND
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 33, ctypes.byref(pref), ctypes.sizeof(pref))
         except Exception:                               # noqa: BLE001
             pass
         try:
