@@ -135,25 +135,30 @@ def _corner_mask(size: int, r: int, color: str, corner: str):
         return _IMG_CACHE[key]
     if not HAS_PIL:
         return None
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ss = 4
+    big = size * ss
+    img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
     px = img.load()
     rgb = tuple(int(color.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
-    e = 2.0 / SQUIRCLE_N
-    for y in range(size):
-        for x in range(size):
+    for y in range(big):
+        for x in range(big):
             if corner == "tr":
-                u, v = size - 1 - x, y
+                u, v = big - 1 - x, y
             elif corner == "bl":
-                u, v = x, size - 1 - y
+                u, v = x, big - 1 - y
             elif corner == "br":
-                u, v = size - 1 - x, size - 1 - y
+                u, v = big - 1 - x, big - 1 - y
             else:
                 u, v = x, y
+            u /= ss
+            v /= ss
             if u >= r or v >= r:
+                px[x, y] = (rgb[0], rgb[1], rgb[2], 255)
                 continue
             inside = ((r - u) / r) ** SQUIRCLE_N + ((r - v) / r) ** SQUIRCLE_N <= 1.0
             if not inside:
                 px[x, y] = (rgb[0], rgb[1], rgb[2], 255)
+    img = img.resize((size, size), Image.LANCZOS)
     photo = ImageTk.PhotoImage(img)
     _IMG_CACHE[key] = photo
     return photo
@@ -581,19 +586,18 @@ class App(tk.Tk):
         try:
             self.update_idletasks()
             hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
-            pref = ctypes.c_int(2)                      # DWMWCP_ROUND
-            hr = ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, 33, ctypes.byref(pref), ctypes.sizeof(pref))   # 半径交给系统
-            if hr == 0:
-                # 即使系统接管，也清掉可能残留的区域，避免双重裁剪
+            if os.environ.get("CNA_TK_ROUND", "").lower() == "dwm":
+                pref = ctypes.c_int(2)                  # DWMWCP_ROUND（小圆角但抗锯齿）
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, 33, ctypes.byref(pref), ctypes.sizeof(pref))
                 ctypes.windll.user32.SetWindowRgn(hwnd, None, True)
-            return
+                return
         except Exception:                               # noqa: BLE001
             pass
         try:
             hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
             w, h = max(200, self.winfo_width()), max(200, self.winfo_height())
-            pts = squircle_points(0, 0, w, h, 20, steps=16)
+            pts = squircle_points(0, 0, w, h, RADIUS_WIN, steps=80)
             flat = [int(v) for pt in pts for v in pt]
             arr = (ctypes.c_long * len(flat))(*flat)
             rgn = ctypes.windll.gdi32.CreatePolygonRgn(arr, len(pts), 2)
