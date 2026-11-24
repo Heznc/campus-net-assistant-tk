@@ -24,6 +24,7 @@ import tray as tray_mod
 from engine import Engine
 
 # ---------------------------------------------------------------- 调色板
+BASE = "#141416"       # 窗口底板（衬托圆角卡片）
 DEEP = "#1c1c1e"
 MID = "#2c2c2e"
 SURFACE = "#3a3a3c"
@@ -531,12 +532,21 @@ class App(tk.Tk):
         return max(0, (self.winfo_screenwidth() - w) // 2), max(0, (self.winfo_screenheight() - h) // 2 - 20)
 
     def _apply_rounding(self):
-        """窗口外轮廓也用超椭圆（和内部圆角同一形状）。"""
+        """窗口外轮廓：优先用 DWM 圆角（合成器抗锯齿），失败再退回区域裁剪。"""
         try:
             self.update_idletasks()
             hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
+            pref = ctypes.c_int(2)                      # DWMWCP_ROUND
+            hr = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 33, ctypes.byref(pref), ctypes.sizeof(pref))   # 半径交给系统
+            if hr == 0:
+                return
+        except Exception:                               # noqa: BLE001
+            pass
+        try:
+            hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
             w, h = max(200, self.winfo_width()), max(200, self.winfo_height())
-            pts = squircle_points(0, 0, w, h, RADIUS_WIN, steps=16)
+            pts = squircle_points(0, 0, w, h, 20, steps=16)
             flat = [int(v) for pt in pts for v in pt]
             arr = (ctypes.c_long * len(flat))(*flat)
             rgn = ctypes.windll.gdi32.CreatePolygonRgn(arr, len(pts), 2)
@@ -691,12 +701,15 @@ class App(tk.Tk):
     # ------------------------------------------------------------ 布局
     def _build(self):
         self._build_titlebar()
-        body = tk.Frame(self, bg=DEEP)
-        body.pack(fill="both", expand=True)
+        body = tk.Frame(self, bg=BASE)
+        body.pack(fill="both", expand=True, padx=10, pady=(2, 10))
 
-        side = tk.Frame(body, bg=DEEP, width=200)
-        side.pack(side="left", fill="y")
-        side.pack_propagate(False)
+        side_card = Card(body, bg=BASE, fill=DEEP, radius=RADIUS_CARD, padding=10)
+        side_card.pack(side="left", fill="y", padx=(0, 8))
+        side_card.configure(width=200)
+        side_card.pack_propagate(False)
+        side = side_card.body
+        side.configure(width=180)
         tk.Label(side, text="校园网助手", bg=DEEP, fg=T1_D, font=F_HEAD,
                  anchor="w", padx=16).pack(fill="x", pady=(14, 0))
         tk.Label(side, text="阳光学院 · 172.19.1.1", bg=DEEP, fg=T3_D, font=F_SMALL,
@@ -712,26 +725,29 @@ class App(tk.Tk):
                                     font=F_SMALL, anchor="w", padx=16)
         self.side_status.pack(side="bottom", fill="x", pady=(0, 12))
 
-        mid = tk.Frame(body, bg=MID, width=300)
-        mid.pack(side="left", fill="y")
-        mid.pack_propagate(False)
+        mid_card = Card(body, bg=BASE, fill=MID, radius=RADIUS_CARD, padding=2)
+        mid_card.pack(side="left", fill="y", padx=(0, 8))
+        mid_card.configure(width=300)
+        mid_card.pack_propagate(False)
+        mid = mid_card.body
         self._build_status(mid)
 
-        content = tk.Frame(body, bg=SURFACE)
-        content.pack(side="left", fill="both", expand=True)
+        content_card = Card(body, bg=BASE, fill=SURFACE, radius=RADIUS_CARD, padding=2)
+        content_card.pack(side="left", fill="both", expand=True)
+        content = content_card.body
         self._content = content
         self._build_views(content)
         self._switch_manual(self._current)
 
     def _build_titlebar(self):
-        bar = tk.Frame(self, bg=DEEP, height=36)
+        bar = tk.Frame(self, bg=BASE, height=36)
         bar.pack(fill="x")
         bar.pack_propagate(False)
-        title = tk.Label(bar, text="校园网助手", bg=DEEP, fg=T3_D, font=F_SMALL)
+        title = tk.Label(bar, text="校园网助手", bg=BASE, fg=T3_D, font=F_SMALL)
         title.pack(side="left", padx=(24, 0))
 
         for text, cmd, danger in (("×", self.hide_to_tray, True), ("—", self._minimize, False)):
-            IconButton(bar, text, cmd, bg=DEEP, danger=danger).pack(
+            IconButton(bar, text, cmd, bg=BASE, danger=danger).pack(
                 side="right", padx=(0, 10), pady=6)
 
         for w in (bar, title):
@@ -755,23 +771,23 @@ class App(tk.Tk):
     # ------------------------------------------------------------ 中栏
     def _build_status(self, mid):
         tk.Label(mid, text="当前状态", bg=MID, fg=T3, font=F_SMALL,
-                 anchor="w", padx=20).pack(fill="x", pady=(16, 2))
+                 anchor="w", padx=16).pack(fill="x", pady=(16, 2))
         self.st_title = tk.Label(mid, text="检测中", bg=MID, fg=T1, font=F_TITLE,
-                                 anchor="w", padx=20)
+                                 anchor="w", padx=16)
         self.st_title.pack(fill="x")
         self.st_msg = tk.Label(mid, text="正在读取认证门户", bg=MID, fg=T2, font=F_BODY,
-                               anchor="w", justify="left", wraplength=252, padx=20, pady=4)
+                               anchor="w", justify="left", wraplength=252, padx=16, pady=4)
         self.st_msg.pack(fill="x")
 
         meta = tk.Frame(mid, bg=MID)
-        meta.pack(fill="x", padx=20, pady=(8, 0))
+        meta.pack(fill="x", padx=16, pady=(8, 0))
         self.st_ip = self._meta_row(meta, "终端 IP")
         self.st_up = self._meta_row(meta, "本次在线")
         self.st_last = self._meta_row(meta, "上次登录")
         self.st_count = self._meta_row(meta, "登录次数")
 
         btns = tk.Frame(mid, bg=MID)
-        btns.pack(fill="x", padx=20, pady=(16, 0))
+        btns.pack(fill="x", padx=16, pady=(16, 0))
         self.btn_login = Button(btns, "立即登录", self._do_login, bg=MID,
                                 fill=ACCENT, width=260, height=38, accent=True)
         self.btn_login.pack(fill="x")
@@ -803,10 +819,10 @@ class App(tk.Tk):
 
     def _page_head(self, parent, title, sub=""):
         tk.Label(parent, text=title, bg=SURFACE, fg=T1_S, font=(FONT, 18, "bold"),
-                 anchor="w").pack(fill="x", padx=28, pady=(18, 2))
+                 anchor="w").pack(fill="x", padx=18, pady=(14, 2))
         if sub:
             tk.Label(parent, text=sub, bg=SURFACE, fg=T3_S, font=F_SMALL,
-                     anchor="w").pack(fill="x", padx=28)
+                     anchor="w").pack(fill="x", padx=18)
 
     # 首次使用引导
     def _view_welcome(self, parent):
@@ -861,17 +877,17 @@ class App(tk.Tk):
         self._page_head(frame, "概览", "认证状态、连接详情与最近活动")
 
         row = tk.Frame(frame, bg=SURFACE)
-        row.pack(fill="x", padx=28, pady=(16, 0))
+        row.pack(fill="x", padx=18, pady=(16, 0))
         self._ov_auth = self._stat_card(row, "认证状态")
         self._ov_uptime = self._stat_card(row, "本次在线")
         self._ov_conn = self._stat_card(row, "外网连通")
 
         head = tk.Frame(frame, bg=SURFACE)
-        head.pack(fill="x", padx=28, pady=(20, 8))
+        head.pack(fill="x", padx=18, pady=(20, 8))
         tk.Label(head, text="最近活动", bg=SURFACE, fg=T2_S, font=F_HEAD).pack(side="left")
 
         holder = tk.Frame(frame, bg=SURFACE)
-        holder.pack(fill="both", expand=True, padx=28, pady=(0, 22))
+        holder.pack(fill="both", expand=True, padx=18, pady=(0, 22))
         self._ov_log = RoundedText(holder, bg=SURFACE, fill=MID, height=180)
         self._ov_log.pack(fill="both", expand=True)
         self._ov_log.text.configure(state="disabled")
@@ -895,13 +911,13 @@ class App(tk.Tk):
     def _view_logs(self, parent):
         frame = tk.Frame(parent, bg=SURFACE)
         head = tk.Frame(frame, bg=SURFACE)
-        head.pack(fill="x", padx=28, pady=(22, 10))
+        head.pack(fill="x", padx=18, pady=(22, 10))
         tk.Label(head, text="运行日志", bg=SURFACE, fg=T1_S, font=F_TITLE).pack(side="left")
         Button(head, "清空", self._clear_logs, bg=SURFACE, fill=MID,
                width=72, height=30, font=F_SMALL).pack(side="right")
 
         holder = tk.Frame(frame, bg=SURFACE)
-        holder.pack(fill="both", expand=True, padx=28, pady=(0, 22))
+        holder.pack(fill="both", expand=True, padx=18, pady=(0, 22))
         self._log_view = RoundedText(holder, bg=SURFACE, fill=MID)
         self._log_view.pack(fill="both", expand=True)
         self._log_view.text.configure(state="disabled")
@@ -922,7 +938,7 @@ class App(tk.Tk):
         outer.winfo_children()[0].pack_configure(pady=(12, 2))
 
         body = tk.Frame(outer, bg=SURFACE)
-        body.pack(fill="both", expand=True, padx=28, pady=(4, 0))
+        body.pack(fill="both", expand=True, padx=18, pady=(2, 0))
 
         tk.Label(body, text="账号", bg=SURFACE, fg=T3_S, font=F_SMALL_B,
                  anchor="w").pack(fill="x", pady=(0, 6))
@@ -965,7 +981,7 @@ class App(tk.Tk):
         self.v_autoclose = self._make_switch(pair, "关闭退出", "", side="left")
 
         bar = tk.Frame(outer, bg=SURFACE)
-        bar.pack(fill="x", padx=28, pady=(10, 12))
+        bar.pack(fill="x", padx=18, pady=(6, 8))
         Button(bar, "保存设置", self._save_settings, bg=SURFACE, fill=ACCENT,
                accent=True, width=140, height=36).pack(side="right")
 
@@ -1018,7 +1034,7 @@ class App(tk.Tk):
         ]
         for key, val in lines:
             row = tk.Frame(frame, bg=SURFACE)
-            row.pack(fill="x", padx=28, pady=6)
+            row.pack(fill="x", padx=18, pady=6)
             tk.Label(row, text=key, bg=SURFACE, fg=T3_S, font=F_SMALL,
                      width=8, anchor="w").pack(side="left")
             tk.Label(row, text=val, bg=SURFACE, fg=T2_S, font=F_BODY,
