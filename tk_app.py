@@ -1056,7 +1056,18 @@ def acquire_single_instance() -> bool:
         return True
 
 
+def _hide_console() -> None:
+    """用 python.exe 启动时把自带的黑色控制台窗口藏起来。"""
+    try:
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)
+    except Exception:                                   # noqa: BLE001
+        pass
+
+
 def main() -> int:
+    _hide_console()
     hidden = "--hidden" in sys.argv
     if not acquire_single_instance():
         return 0
