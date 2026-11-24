@@ -1,0 +1,23 @@
+# 运行期生成的数据（配置、日志、WebView2 缓存）
+data/
+# Python 缓存
+__pycache__/
+*.py[cod]
+# 打包产物
+dist/
+# 编辑器
+.vscode/
+.idea/
+*.swp
+# 系统
+Thumbs.db
+desktop.ini
+
+# 打包产物
+*.exe
+build/
+launcher.spec
+校园网助手.spec
+*.spec
+*.pyc
+__pycache__/
