@@ -2008,6 +2008,14 @@ class App(tk.Tk):
         return time.strftime("%m-%d %H:%M", time.localtime(ts)) if ts else "—"
 
 
+def _msgbox(title: str, text: str, error: bool = False) -> None:
+    """中文消息框（windowed 模式也能弹）。"""
+    try:
+        ctypes.windll.user32.MessageBoxW(None, text, title, 0x10 if error else 0x40)
+    except Exception:                                   # noqa: BLE001
+        pass
+
+
 def _release_mutex() -> None:
     handle = globals().get("_MUTEX")
     if handle:
@@ -2059,6 +2067,9 @@ def main() -> int:
                          f"已有实例在运行，本次启动退出\n")
         except Exception:                           # noqa: BLE001
             pass
+        _msgbox("校园网助手",
+                "校园网助手已经在运行。\n\n"
+                "请查看右下角托盘图标，或直接在任务栏找到已打开的窗口。")
         return 0
     engine = Engine()
     app = App(engine, start_hidden=hidden)
@@ -2090,4 +2101,21 @@ def _install_crash_log() -> None:
 
 if __name__ == "__main__":
     _install_crash_log()
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except BaseException as exc:                        # noqa: BLE001
+        import traceback
+        detail = traceback.format_exc()
+        try:
+            import store as _store
+            _store.ensure_dirs()
+            where = os.path.join(_store.DATA_DIR, "crash.log")
+            with open(where, "a", encoding="utf-8") as fh:
+                fh.write(detail)
+        except Exception:                               # noqa: BLE001
+            where = "crash.log"
+        _msgbox("校园网助手启动失败",
+                f"程序启动时出错：{exc}\n\n详细信息已写入：\n{where}", error=True)
+        raise
