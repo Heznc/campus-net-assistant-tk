@@ -700,20 +700,19 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------ 布局
     def _build(self):
+        """层叠结构：窗口底 → 中栏卡片 → 内容卡片，一层压一层。"""
         self._build_titlebar()
-        body = tk.Frame(self, bg=BASE)
-        body.pack(fill="both", expand=True, padx=10, pady=(2, 10))
+        body = tk.Frame(self, bg=DEEP)
+        body.pack(fill="both", expand=True)
 
-        side_card = Card(body, bg=BASE, fill=DEEP, radius=RADIUS_CARD, padding=10)
-        side_card.pack(side="left", fill="y", padx=(0, 8))
-        side_card.configure(width=200)
-        side_card.pack_propagate(False)
-        side = side_card.body
-        side.configure(width=180)
+        # 第一层：侧栏（与窗口底色同色，作为最底层）
+        side = tk.Frame(body, bg=DEEP, width=196)
+        side.pack(side="left", fill="y")
+        side.pack_propagate(False)
         tk.Label(side, text="校园网助手", bg=DEEP, fg=T1_D, font=F_HEAD,
-                 anchor="w", padx=16).pack(fill="x", pady=(14, 0))
+                 anchor="w", padx=18).pack(fill="x", pady=(14, 0))
         tk.Label(side, text="阳光学院 · 172.19.1.1", bg=DEEP, fg=T3_D, font=F_SMALL,
-                 anchor="w", padx=16).pack(fill="x", pady=(2, 14))
+                 anchor="w", padx=18).pack(fill="x", pady=(2, 14))
 
         for key, label in (("overview", "总览"), ("settings", "设置"),
                            ("logs", "运行日志"), ("about", "关于")):
@@ -722,18 +721,22 @@ class App(tk.Tk):
             self._navs[key] = item
 
         self.side_status = tk.Label(side, text="● 检测中", bg=DEEP, fg=T3_D,
-                                    font=F_SMALL, anchor="w", padx=16)
+                                    font=F_SMALL, anchor="w", padx=18)
         self.side_status.pack(side="bottom", fill="x", pady=(0, 12))
 
-        mid_card = Card(body, bg=BASE, fill=MID, radius=RADIUS_CARD, padding=2)
-        mid_card.pack(side="left", fill="y", padx=(0, 8))
-        mid_card.configure(width=300)
-        mid_card.pack_propagate(False)
+        # 第二层：中栏卡片（浮在侧栏之上，四周留 8px）
+        mid_card = Card(body, bg=DEEP, fill=MID, radius=RADIUS_CARD, padding=0)
+        mid_card.pack(side="left", fill="both", expand=True, padx=(0, 6), pady=6)
         mid = mid_card.body
-        self._build_status(mid)
 
-        content_card = Card(body, bg=BASE, fill=SURFACE, radius=RADIUS_CARD, padding=2)
-        content_card.pack(side="left", fill="both", expand=True)
+        status = tk.Frame(mid, bg=MID, width=272)
+        status.pack(side="left", fill="y")
+        status.pack_propagate(False)
+        self._build_status(status)
+
+        # 第三层：内容卡片（嵌在中栏卡片里，右上下一圈 8px 露出中栏色）
+        content_card = Card(mid, bg=MID, fill=SURFACE, radius=RADIUS_CARD - 2, padding=0)
+        content_card.pack(side="left", fill="both", expand=True, padx=(0, 6), pady=6)
         content = content_card.body
         self._content = content
         self._build_views(content)
@@ -819,7 +822,7 @@ class App(tk.Tk):
 
     def _page_head(self, parent, title, sub=""):
         tk.Label(parent, text=title, bg=SURFACE, fg=T1_S, font=(FONT, 18, "bold"),
-                 anchor="w").pack(fill="x", padx=18, pady=(14, 2))
+                 anchor="w").pack(fill="x", padx=16, pady=(10, 2))
         if sub:
             tk.Label(parent, text=sub, bg=SURFACE, fg=T3_S, font=F_SMALL,
                      anchor="w").pack(fill="x", padx=18)
@@ -981,7 +984,7 @@ class App(tk.Tk):
         self.v_autoclose = self._make_switch(pair, "关闭退出", "", side="left")
 
         bar = tk.Frame(outer, bg=SURFACE)
-        bar.pack(fill="x", padx=18, pady=(6, 8))
+        bar.pack(fill="x", padx=16, pady=(4, 6))
         Button(bar, "保存设置", self._save_settings, bg=SURFACE, fill=ACCENT,
                accent=True, width=140, height=36).pack(side="right")
 
@@ -1010,7 +1013,7 @@ class App(tk.Tk):
         if side:
             row.pack(side=side, fill="x", expand=True, pady=3, padx=(0, 8))
         else:
-            row.pack(fill="x", pady=3)
+            row.pack(fill="x", pady=2)
         txt = tk.Frame(row, bg=SURFACE)
         txt.pack(side="left", fill="x", expand=True)
         tk.Label(txt, text=label, bg=SURFACE, fg=T1_S, font=F_BODY, anchor="w").pack(fill="x")
