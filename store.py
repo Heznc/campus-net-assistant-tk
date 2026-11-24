@@ -199,10 +199,13 @@ def _launch_target() -> tuple[str, str]:
     launcher = os.environ.get("CNA_LAUNCHER")
     if launcher and os.path.isfile(launcher):
         return launcher, "--hidden"
-    for cand in (os.path.join(APP_DIR, "校园网助手.exe"),
-                 os.path.join(APP_DIR, "dist", "校园网助手", "校园网助手.exe")):
-        if os.path.isfile(cand):
-            return cand, "--hidden"
+    # 注意：打包版 exe 在部分环境下无法注册托盘图标（Shell_NotifyIcon err=5），
+    # 所以自启优先用 pythonw 跑源码；需要 exe 时设置 CNA_AUTOSTART=exe。
+    if os.environ.get("CNA_AUTOSTART", "").lower() == "exe":
+        for cand in (os.path.join(APP_DIR, "校园网助手.exe"),
+                     os.path.join(APP_DIR, "dist", "校园网助手", "校园网助手.exe")):
+            if os.path.isfile(cand):
+                return cand, "--hidden"
     return _pythonw(), f'"{os.path.join(APP_DIR, "tk_app.py")}" --hidden'
 
 
