@@ -1,10 +1,12 @@
 """校园网助手 · Tk 版（macOS Vibrancy 风格）
 
-纯 tkinter 实现，无 WebView、无本地 HTTP 服务：界面直接读 Engine 状态，
-常驻内存约 40 MB，空闲 CPU ≈ 0。
+纯 tkinter 实现，无 WebView、无本地 HTTP 服务。
 
-配色严格使用三级灰：#1c1c1e / #2c2c2e / #3a3a3c，
-无渐变、无发光、无大面积阴影、无描边，层级全靠色差；圆角最大 12px。
+设计约束：
+- 只用三级灰：#1c1c1e / #2c2c2e / #3a3a3c
+- 无渐变、无发光、无阴影、无描边（层级全靠色差）
+- 圆角：窗口 12px，卡片/输入框/按钮 8–10px
+- 字体统一用系统黑体（微软雅黑），只有字重差异，不引入任何需授权的字体
 """
 
 from __future__ import annotations
@@ -15,121 +17,208 @@ import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import font as tkfont
 
 import store
 import tray as tray_mod
 from engine import Engine
 
 # ---------------------------------------------------------------- 调色板
-DEEP = "#1c1c1e"        # 侧栏
-MID = "#2c2c2e"         # 中栏 / 卡片
-SURFACE = "#3a3a3c"     # 内容区 / 按钮
-ACCENT = "#0a84ff"      # 唯一强调色（macOS 蓝）
+DEEP = "#1c1c1e"
+MID = "#2c2c2e"
+SURFACE = "#3a3a3c"
+ACCENT = "#0a84ff"
 DANGER = "#ff453a"
-
 WHITE = "#ffffff"
+
+RADIUS_WIN = 12
+RADIUS_CARD = 10
+RADIUS_CTRL = 8
 
 
 def blend(bg: str, alpha: float) -> str:
-    """把白色按 alpha 叠到 bg 上，模拟 white/xx 的透明度。"""
     bg = bg.lstrip("#")
     r, g, b = (int(bg[i:i + 2], 16) for i in (0, 2, 4))
-    nr = round(r + (255 - r) * alpha)
-    ng = round(g + (255 - g) * alpha)
-    nb = round(b + (255 - b) * alpha)
-    return f"#{nr:02x}{ng:02x}{nb:02x}"
+    return "#%02x%02x%02x" % (
+        round(r + (255 - r) * alpha),
+        round(g + (255 - g) * alpha),
+        round(b + (255 - b) * alpha),
+    )
 
 
-def hover(bg: str) -> str:
-    return blend(bg, 0.05)
+# 文本三档（按各自底色混合）
+T1, T2, T3 = blend(MID, .95), blend(MID, .70), blend(MID, .40)
+T1_D, T2_D, T3_D = blend(DEEP, .95), blend(DEEP, .70), blend(DEEP, .40)
+T1_S, T2_S, T3_S = blend(SURFACE, .95), blend(SURFACE, .70), blend(SURFACE, .40)
+
+# 统一系统黑体，仅用字重区分层级（无版权风险）
+FONT = "Microsoft YaHei UI"
+F_BODY = (FONT, 10)
+F_BODY_B = (FONT, 10, "bold")
+F_SMALL = (FONT, 9)
+F_SMALL_B = (FONT, 9, "bold")
+F_TITLE = (FONT, 20, "bold")
+F_HEAD = (FONT, 13, "bold")
+F_BTN = (FONT, 10, "bold")
 
 
-def active(bg: str) -> str:
-    return blend(bg, 0.09)
+def rr_points(x1, y1, x2, y2, r):
+    return [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
+            x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
+            x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
 
 
-# 文本三档：95% / 70% / 40% 白
-T_PRIMARY = blend(MID, 0.95)
-T_SECOND = blend(MID, 0.70)
-T_MUTED = blend(MID, 0.40)
-T_PRIMARY_ON_DEEP = blend(DEEP, 0.95)
-T_SECOND_ON_DEEP = blend(DEEP, 0.70)
-T_MUTED_ON_DEEP = blend(DEEP, 0.40)
-T_PRIMARY_ON_SURFACE = blend(SURFACE, 0.95)
-T_SECOND_ON_SURFACE = blend(SURFACE, 0.70)
-T_MUTED_ON_SURFACE = blend(SURFACE, 0.40)
+# ---------------------------------------------------------------- 基础控件
+class RoundCanvas(tk.Canvas):
+    """圆角容器基类：画一个圆角矩形当背景。"""
 
-F_TITLE = ("SimSun", 20)            # 宋体＝中文衬线，对应 serif 标题
-F_HEAD = ("SimSun", 15)
-F_BODY = ("Microsoft YaHei UI", 10)
-F_SMALL = ("Microsoft YaHei UI", 9)
-F_MONO = ("Consolas", 9)
-F_SERIF_LATIN = ("Georgia", 11)
+    def __init__(self, master, *, bg, fill, radius=RADIUS_CARD, width=None, height=None):
+        kw = {}
+        if width is not None:
+            kw["width"] = width
+        if height is not None:
+            kw["height"] = height
+        super().__init__(master, bg=bg, highlightthickness=0, bd=0, takefocus=0, **kw)
+        self._fill = fill
+        self._radius = radius
+        self.bind("<Configure>", self._redraw)
 
-RADIUS = 12
+    def _redraw(self, _event=None):
+        w, h = self.winfo_width(), self.winfo_height()
+        if w <= 1 or h <= 1:
+            return
+        self.delete("bgshape")
+        self.create_polygon(rr_points(0, 0, w - 1, h - 1, self._radius),
+                            smooth=True, splinesteps=24, fill=self._fill, tags="bgshape")
+        self.tag_lower("bgshape")
+
+    def set_fill(self, color: str):
+        self._fill = color
+        self.itemconfigure("bgshape", fill=color)
 
 
-# ---------------------------------------------------------------- 组件
-class RoundRect(tk.Canvas):
-    """圆角矩形按钮：无描边，靠底色差异区分状态。"""
+class Card(tk.Frame):
+    """圆角卡片：外层 Canvas 画底色，内层 Frame 放内容（同色，边角被圆角包住）。"""
 
-    def __init__(self, master, text, command=None, *, bg=MID, fg=None,
-                 fill=SURFACE, width=120, height=34, radius=8,
-                 font=None, accent=False, danger=False):
+    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=RADIUS_CARD, padding=14):
+        super().__init__(master, bg=bg)
+        self._canvas = RoundCanvas(self, bg=bg, fill=fill, radius=radius)
+        self._canvas.pack(fill="both", expand=True)
+        self.body = tk.Frame(self._canvas, bg=fill)
+        self._pad = padding
+        self._win = self._canvas.create_window(padding, padding, window=self.body, anchor="nw")
+        self._canvas.bind("<Configure>", self._on_resize, add="+")
+
+    def _on_resize(self, event):
+        self._canvas.itemconfigure(self._win, width=max(10, event.width - self._pad * 2),
+                                   height=max(10, event.height - self._pad * 2))
+
+
+class Button(tk.Canvas):
+    """圆角按钮：文字严格居中，无描边。"""
+
+    def __init__(self, master, text, command=None, *, bg=MID, fill=SURFACE,
+                 fg=None, width=120, height=34, radius=RADIUS_CTRL,
+                 font=F_BTN, accent=False):
         super().__init__(master, width=width, height=height, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
-        self._bg = bg
-        self._fill = fill
-        self._hover = hover(fill)
-        self._press = active(fill)
-        self._accent = accent
-        self._danger = danger
+        self._bg, self._fill = bg, fill
+        self._fg = fg or (WHITE if accent else T1_S)
         self._radius = radius
         self._text = text
+        self._font = font
         self._command = command
-        self._font = font or F_BODY
-        self._fg = fg or (WHITE if accent else T_PRIMARY_ON_SURFACE)
-        self._draw(self._fill)
-        self.bind("<Enter>", lambda e: self._draw(self._hover))
-        self.bind("<Leave>", lambda e: self._draw(self._fill))
-        self.bind("<ButtonPress-1>", lambda e: self._draw(self._press))
+        self._enabled = True
+        self._paint(self._fill)
+        self.bind("<Enter>", lambda e: self._enabled and self._paint(blend(self._fill, .06)))
+        self.bind("<Leave>", lambda e: self._paint(self._fill))
+        self.bind("<ButtonPress-1>", lambda e: self._enabled and self._paint(blend(self._fill, .12)))
         self.bind("<ButtonRelease-1>", self._release)
 
-    def _rr(self, x1, y1, x2, y2, r):
-        pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
-               x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
-               x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
-        return self.create_polygon(pts, smooth=True, splinesteps=24, fill=self._cur)
-
-    def _draw(self, color):
-        self._cur = color
+    def _paint(self, color):
         self.delete("all")
-        w = int(self["width"])
-        h = int(self["height"])
-        self._rr(0, 0, w - 1, h - 1, self._radius)
-        self.create_text(w // 2, h // 2 + 1, text=self._text, fill=self._fg, font=self._font)
+        w, h = int(self["width"]), int(self["height"])
+        self.create_polygon(rr_points(0, 0, w - 1, h - 1, self._radius),
+                            smooth=True, splinesteps=24, fill=color)
+        self.create_text(w / 2, h / 2, text=self._text, fill=self._fg,
+                         font=self._font, anchor="center")
 
     def _release(self, event):
         inside = 0 <= event.x <= int(self["width"]) and 0 <= event.y <= int(self["height"])
-        self._draw(self._hover if inside else self._fill)
-        if inside and self._command:
+        self._paint(blend(self._fill, .06) if inside else self._fill)
+        if inside and self._enabled and self._command:
             self._command()
 
-    def set_text(self, text: str) -> None:
+    def set_text(self, text):
         self._text = text
-        self._draw(self._fill)
+        self._paint(self._fill)
 
-    def set_enabled(self, enabled: bool) -> None:
-        self._command = self._command if enabled else None
-        self._fg = (WHITE if self._accent else T_PRIMARY_ON_SURFACE) if enabled else T_MUTED_ON_SURFACE
+    def set_enabled(self, enabled):
+        self._enabled = enabled
+        self._fg = (WHITE if self._fill == ACCENT else T1_S) if enabled else T3_S
+        self._paint(self._fill)
+
+
+class RoundedEntry(tk.Canvas):
+    """圆角输入框：Canvas 画圆角底，Entry 同色内嵌，四角看不到直角。"""
+
+    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=RADIUS_CTRL,
+                 height=36, show=None, fg=None):
+        super().__init__(master, bg=bg, height=height, highlightthickness=0, bd=0, takefocus=0)
+        self._fill = fill
+        self._radius = radius
+        self.entry = tk.Entry(self, bg=fill, fg=fg or T1, font=F_BODY, bd=0,
+                              relief="flat", highlightthickness=0,
+                              insertbackground=T1, show=show or "")
+        self._win = self.create_window(12, height // 2, window=self.entry, anchor="w")
+        self.bind("<Configure>", self._resize)
+
+    def _resize(self, event):
+        w, h = event.width, event.height
+        self.delete("bgshape")
+        self.create_polygon(rr_points(0, 0, w - 1, h - 1, self._radius),
+                            smooth=True, splinesteps=24, fill=self._fill, tags="bgshape")
+        self.tag_lower("bgshape")
+        self.itemconfigure(self._win, width=max(10, w - 24), height=h - 10)
+
+    # 代理常用方法
+    def get(self):
+        return self.entry.get()
+
+    def set(self, text):
+        self.entry.delete(0, "end")
+        self.entry.insert(0, text)
+
+    def clear(self):
+        self.entry.delete(0, "end")
+
+    def focus(self):
+        self.entry.focus_set()
+
+
+class RoundedText(tk.Canvas):
+    """圆角日志区：Canvas 圆角底 + 内嵌 Text。"""
+
+    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=RADIUS_CARD, height=200):
+        super().__init__(master, bg=bg, height=height, highlightthickness=0, bd=0)
+        self._fill = fill
+        self._radius = radius
+        self.text = tk.Text(self, bg=fill, fg=T2, font=F_SMALL, bd=0,
+                            highlightthickness=0, wrap="word", padx=12, pady=10,
+                            insertwidth=0, selectbackground=blend(fill, .18))
+        self._win = self.create_window(10, 8, window=self.text, anchor="nw")
+        self.bind("<Configure>", self._resize)
+
+    def _resize(self, event):
+        w, h = event.width, event.height
+        self.delete("bgshape")
+        self.create_polygon(rr_points(0, 0, w - 1, h - 1, self._radius),
+                            smooth=True, splinesteps=24, fill=self._fill, tags="bgshape")
+        self.tag_lower("bgshape")
+        self.itemconfigure(self._win, width=max(10, w - 20), height=max(10, h - 16))
 
 
 class Toggle(tk.Canvas):
-    """开关：圆角矩形轨道 + 方形圆角滑块（不用 rounded-full）。"""
-
-    def __init__(self, master, value: bool, command=None, *, bg=MID,
-                 width=44, height=24):
+    def __init__(self, master, value: bool, command=None, *, bg=MID, width=44, height=24):
         super().__init__(master, width=width, height=height, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
         self._on = value
@@ -143,34 +232,28 @@ class Toggle(tk.Canvas):
 
     def _paint(self, hovering=False):
         self.delete("all")
-        track = ACCENT if self._on else (hover(SURFACE) if hovering else SURFACE)
-        self._rr(0, 2, self._cw - 1, self._ch - 3, 10, track)
+        track = ACCENT if self._on else (blend(SURFACE, .06) if hovering else SURFACE)
+        self.create_polygon(rr_points(0, 2, self._cw - 1, self._ch - 3, 9),
+                            smooth=True, splinesteps=20, fill=track)
         knob_w = 18
         x = self._cw - knob_w - 4 if self._on else 4
-        self._rr(x, 4, x + knob_w, self._ch - 5, 8, WHITE)
+        self.create_polygon(rr_points(x, 4, x + knob_w, self._ch - 5, 7),
+                            smooth=True, splinesteps=20, fill=WHITE)
 
-    def _rr(self, x1, y1, x2, y2, r, color):
-        pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
-               x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
-               x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
-        self.create_polygon(pts, smooth=True, splinesteps=24, fill=color)
-
-    def _toggle(self, _event=None):
+    def _toggle(self, _e=None):
         self._on = not self._on
         self._paint()
         if self._command:
             self._command(self._on)
 
     @property
-    def value(self) -> bool:
+    def value(self):
         return self._on
 
 
 class Slider(tk.Canvas):
-    """横向滑杆：轨道 + 已选段 + 圆角滑块。"""
-
     def __init__(self, master, value, minimum=5, maximum=180, step=5,
-                 command=None, bg=MID, width=260):
+                 command=None, bg=MID, width=240):
         super().__init__(master, width=width, height=22, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
         self._min, self._max, self._step = minimum, maximum, step
@@ -184,64 +267,86 @@ class Slider(tk.Canvas):
     def _paint(self):
         self.delete("all")
         y = 11
-        self.create_rectangle(0, y - 2, self._cw, y + 2, fill=SURFACE, outline="")
+        self.create_line(4, y, self._cw - 4, y, fill=SURFACE, width=4, capstyle="round")
         ratio = (self._value - self._min) / max(1, self._max - self._min)
-        x = int(ratio * (self._cw - 12)) + 6
-        self.create_rectangle(0, y - 2, x, y + 2, fill=ACCENT, outline="")
-        self.create_rectangle(x - 5, y - 6, x + 5, y + 6, fill=WHITE, outline="")
+        x = int(ratio * (self._cw - 24)) + 12
+        self.create_line(4, y, x, y, fill=ACCENT, width=4, capstyle="round")
+        self.create_oval(x - 6, y - 6, x + 6, y + 6, fill=WHITE, outline="")
 
     def _drag(self, event):
-        ratio = max(0.0, min(1.0, (event.x - 6) / max(1, self._cw - 12)))
+        ratio = max(0.0, min(1.0, (event.x - 12) / max(1, self._cw - 24)))
         raw = self._min + ratio * (self._max - self._min)
-        step = self._step
-        self._value = int(round(raw / step) * step)
-        self._value = max(self._min, min(self._max, self._value))
+        self._value = max(self._min, min(self._max, int(round(raw / self._step) * self._step)))
         self._paint()
         if self._command:
             self._command(self._value)
 
     @property
-    def value(self) -> int:
+    def value(self):
         return self._value
 
 
-class NavItem(tk.Frame):
-    """侧栏导航项：悬停/选中只变底色。"""
+class NavItem(tk.Canvas):
+    """圆角导航项：选中/悬停只变底色，文字左对齐，垂直居中。"""
 
-    def __init__(self, master, text, command, *, active=False):
-        super().__init__(master, bg=DEEP, height=32)
-        self.pack_propagate(False)
+    def __init__(self, master, text, command, *, bg=DEEP, width=176, height=32):
+        super().__init__(master, bg=bg, width=width, height=height,
+                         highlightthickness=0, bd=0, takefocus=0)
+        self._bg = bg
+        self._text = text
         self._command = command
-        self._active = active
-        self.label = tk.Label(self, text=text, anchor="w", bg=DEEP,
-                              fg=T_PRIMARY_ON_DEEP if active else T_SECOND_ON_DEEP,
-                              font=F_BODY, padx=12, pady=6)
-        self.label.pack(fill="both", expand=True)
-        for w in (self, self.label):
-            w.bind("<Button-1>", lambda e: self._command())
-            w.bind("<Enter>", self._enter)
-            w.bind("<Leave>", self._leave)
+        self._active = False
+        self._cw, self._ch = width, height
+        self.bind("<Button-1>", lambda e: command())
+        self.bind("<Enter>", lambda e: self._paint(hover=True))
+        self.bind("<Leave>", lambda e: self._paint())
         self._paint()
 
-    def _paint(self):
-        bg = blend(DEEP, 0.10) if self._active else DEEP
-        self.configure(bg=bg)
-        self.label.configure(bg=bg, fg=T_PRIMARY_ON_DEEP if self._active else T_SECOND_ON_DEEP)
+    def _paint(self, hover=False):
+        self.delete("all")
+        if self._active:
+            fill = blend(DEEP, .10)
+        elif hover:
+            fill = blend(DEEP, .05)
+        else:
+            fill = DEEP
+        if fill != DEEP:
+            self.create_polygon(rr_points(0, 0, self._cw - 1, self._ch - 1, 8),
+                                smooth=True, splinesteps=20, fill=fill)
+        self.create_text(14, self._ch / 2, text=self._text, anchor="w",
+                         font=F_BODY_B if self._active else F_BODY,
+                         fill=T1_D if self._active else T2_D)
 
-    def _enter(self, _e):
-        if not self._active:
-            self.configure(bg=blend(DEEP, 0.05))
-            self.label.configure(bg=blend(DEEP, 0.05), fg=T_PRIMARY_ON_DEEP)
-
-    def _leave(self, _e):
-        self._paint()
-
-    def set_active(self, active: bool):
+    def set_active(self, active):
         self._active = active
         self._paint()
 
 
-# ---------------------------------------------------------------- 主界面
+class IconButton(tk.Canvas):
+    """标题栏小按钮：圆角、字符居中。"""
+
+    def __init__(self, master, glyph, command, *, bg=DEEP, width=32, height=24, danger=False):
+        super().__init__(master, width=width, height=height, bg=bg,
+                         highlightthickness=0, bd=0, takefocus=0)
+        self._bg, self._glyph, self._command = bg, glyph, command
+        self._danger = danger
+        self._cw, self._ch = width, height
+        self.bind("<Button-1>", lambda e: command())
+        self.bind("<Enter>", lambda e: self._paint(hover=True))
+        self.bind("<Leave>", lambda e: self._paint())
+        self._paint()
+
+    def _paint(self, hover=False):
+        self.delete("all")
+        fill = (DANGER if self._danger else blend(DEEP, .12)) if hover else self._bg
+        if hover:
+            self.create_polygon(rr_points(0, 0, self._cw - 1, self._ch - 1, 7),
+                                smooth=True, splinesteps=18, fill=fill)
+        self.create_text(self._cw / 2, self._ch / 2 - 1, text=self._glyph,
+                         fill=WHITE if hover else T2_D, font=(FONT, 10, "bold"))
+
+
+# ---------------------------------------------------------------- 主窗口
 class App(tk.Tk):
     def __init__(self, engine: Engine, start_hidden: bool = False):
         super().__init__()
@@ -257,40 +362,55 @@ class App(tk.Tk):
         self._sig = None
         self._last_seq = 0
         self._tray = None
+        self._pending_interval = int(engine.cfg.get("interval", 20))
+        self._first_run = not self._has_credentials()
 
         self._build()
-        self.after(120, self._finish_show, start_hidden)
+        self.after(80, lambda: self._finish_show(start_hidden))
         self._start_tray()
         threading.Thread(target=engine.run_forever, daemon=True).start()
         self._tick()
 
-    # ------------------------------------------------------------ 窗口
+    # ------------------------------------------------------------ 基础
+    def _has_credentials(self) -> bool:
+        cfg = self.engine.cfg
+        return bool(cfg.get("user")) and bool(store.unprotect(cfg.get(store._ENC_FIELD, "")))
+
     def _center(self, w, h):
-        sw = self.winfo_screenwidth()
-        sh = self.winfo_screenheight()
-        return max(0, (sw - w) // 2), max(0, (sh - h) // 2 - 20)
+        return max(0, (self.winfo_screenwidth() - w) // 2), max(0, (self.winfo_screenheight() - h) // 2 - 20)
 
     def _apply_rounding(self):
         try:
             self.update_idletasks()
             hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
-            w = max(200, self.winfo_width())
-            h = max(200, self.winfo_height())
+            w, h = max(200, self.winfo_width()), max(200, self.winfo_height())
             rgn = ctypes.windll.gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1,
-                                                         RADIUS * 2, RADIUS * 2)
+                                                         RADIUS_WIN * 2, RADIUS_WIN * 2)
             ctypes.windll.user32.SetWindowRgn(hwnd, rgn, True)
         except Exception:                               # noqa: BLE001
             pass
 
     def _finish_show(self, start_hidden: bool):
         self.title("校园网助手")
-        if not start_hidden:
-            self.deiconify()
-            self.lift()
-            self.update_idletasks()
-            self._apply_rounding()
-        else:
-            self._tray_notify("校园网助手已启动", "在右下角托盘里，右键可操作")
+        if start_hidden:
+            self._notify("校园网助手已启动", "在右下角托盘里，右键可操作")
+            return
+        self.deiconify()
+        self.lift()
+        self.update_idletasks()
+        self._apply_rounding()
+        if self._first_run:
+            self._switch("welcome")
+            self.w_user.focus()
+        forced = os.environ.get("CNA_TK_VIEW")
+        if forced in ("overview", "settings", "logs", "about"):
+            self._switch(forced)
+
+    # ------------------------------------------------------------ 窗口行为
+    def hide_to_tray(self):
+        """点 × 只收进托盘，不退出。"""
+        self.withdraw()
+        self._notify("已收进托盘", "右键托盘图标可退出")
 
     def show_window(self):
         self.deiconify()
@@ -299,14 +419,26 @@ class App(tk.Tk):
             self.focus_force()
         except Exception:                               # noqa: BLE001
             pass
+        self.update_idletasks()
+        self._apply_rounding()
 
+    def quit_app(self):
+        self.engine.shutdown()
+        if self._tray is not None:
+            try:
+                self._tray.stop()
+            except Exception:                           # noqa: BLE001
+                pass
+        self.destroy()
+
+    # ------------------------------------------------------------ 托盘
     def _start_tray(self):
         def state_fn():
             st = self.engine.state
             key = "online" if st.get("authenticated") else {
                 "offline": "offline", "error": "error"}.get(st.get("phase"), "idle")
-            tip = f"校园网助手 · {'已认证' if key == 'online' else '待认证'} · {st.get('ip') or '—'}"
-            return key, tip, bool(self.engine.cfg.get("auto_login"))
+            return key, f"校园网助手 · {'已认证' if key == 'online' else '待认证'} · {st.get('ip') or '—'}", \
+                bool(self.engine.cfg.get("auto_login"))
 
         def open_win():
             self.after(0, self.show_window)
@@ -318,97 +450,72 @@ class App(tk.Tk):
             threading.Thread(target=self.engine.login, daemon=True).start()
 
         def toggle_auto():
-            self.after(0, lambda: self._toggle_auto_from_tray())
+            self.after(0, lambda: (self.engine.update_config(
+                {"auto_login": not self.engine.cfg.get("auto_login")}), self._refresh()))
 
         def quit_app():
             self.after(0, self.quit_app)
 
         try:
-            self._tray = tray_mod.Tray(
-                os.path.join(store.APP_DIR, "assets"), state_fn,
-                open_win, do_check, do_login, toggle_auto, quit_app,
-                log=self.engine.log)
+            self._tray = tray_mod.Tray(os.path.join(store.APP_DIR, "assets"), state_fn,
+                                       open_win, do_check, do_login, toggle_auto, quit_app,
+                                       log=self.engine.log)
             self._tray.start()
         except Exception as exc:                        # noqa: BLE001
             self.engine.log(f"托盘初始化失败：{exc}", "warn")
 
-    def _tray_notify(self, title, text):
+    def _notify(self, title, text):
         if self._tray is not None:
             try:
                 self._tray.notify(title, text)
             except Exception:                           # noqa: BLE001
                 pass
 
-    def _toggle_auto_from_tray(self):
-        self.engine.update_config({"auto_login": not self.engine.cfg.get("auto_login")})
-        if self._current == "settings":
-            self._sync_settings()
-        self._refresh()
-
-    def quit_app(self):
-        self.engine.shutdown()
-        if self._tray is not None:
-            try:
-                self._tray.stop()
-            except Exception:                           # noqa: BLE001
-                pass
-        self.destroy()
-
     # ------------------------------------------------------------ 布局
     def _build(self):
         self._build_titlebar()
-
         body = tk.Frame(self, bg=DEEP)
         body.pack(fill="both", expand=True)
 
-        # 侧栏
-        side = tk.Frame(body, bg=DEEP, width=196)
+        side = tk.Frame(body, bg=DEEP, width=200)
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
-        tk.Label(side, text="校园网助手", bg=DEEP, fg=T_PRIMARY_ON_DEEP,
-                 font=F_HEAD, anchor="w", padx=16).pack(fill="x", pady=(16, 2))
-        tk.Label(side, text="阳光学院 · 172.19.1.1", bg=DEEP, fg=T_MUTED_ON_DEEP,
-                 font=F_SMALL, anchor="w", padx=16).pack(fill="x", pady=(0, 18))
+        tk.Label(side, text="校园网助手", bg=DEEP, fg=T1_D, font=F_HEAD,
+                 anchor="w", padx=16).pack(fill="x", pady=(14, 0))
+        tk.Label(side, text="阳光学院 · 172.19.1.1", bg=DEEP, fg=T3_D, font=F_SMALL,
+                 anchor="w", padx=16).pack(fill="x", pady=(2, 14))
 
         for key, label in (("overview", "总览"), ("settings", "设置"),
                            ("logs", "运行日志"), ("about", "关于")):
-            item = NavItem(side, label, lambda k=key: self._switch(k),
-                           active=(key == self._current))
-            item.pack(fill="x", padx=8, pady=1)
+            item = NavItem(side, label, lambda k=key: self._switch_manual(k))
+            item.pack(padx=12, pady=1)
             self._navs[key] = item
 
-        self.side_status = tk.Label(side, text="● 检测中", bg=DEEP, fg=T_MUTED_ON_DEEP,
+        self.side_status = tk.Label(side, text="● 检测中", bg=DEEP, fg=T3_D,
                                     font=F_SMALL, anchor="w", padx=16)
-        self.side_status.pack(side="bottom", fill="x", pady=(0, 14))
+        self.side_status.pack(side="bottom", fill="x", pady=(0, 12))
 
-        # 中栏：状态
         mid = tk.Frame(body, bg=MID, width=300)
         mid.pack(side="left", fill="y")
         mid.pack_propagate(False)
         self._build_status(mid)
 
-        # 内容区
         content = tk.Frame(body, bg=SURFACE)
         content.pack(side="left", fill="both", expand=True)
         self._content = content
         self._build_views(content)
-        self._switch("overview")
+        self._switch_manual(self._current)
 
     def _build_titlebar(self):
         bar = tk.Frame(self, bg=DEEP, height=36)
         bar.pack(fill="x")
         bar.pack_propagate(False)
-        title = tk.Label(bar, text="校园网助手", bg=DEEP, fg=T_MUTED_ON_DEEP, font=F_SMALL)
+        title = tk.Label(bar, text="校园网助手", bg=DEEP, fg=T3_D, font=F_SMALL)
         title.pack(side="left", padx=14)
 
-        for text, cmd, color in (("×", self.quit_app, DANGER), ("—", self._minimize, None)):
-            lbl = tk.Label(bar, text=text, bg=DEEP, fg=T_SECOND_ON_DEEP, font=("Segoe UI", 11),
-                           width=3, cursor="hand2")
-            lbl.pack(side="right", padx=(0, 6), pady=4)
-            lbl.bind("<Button-1>", lambda e, c=cmd: c())
-            lbl.bind("<Enter>", lambda e, w=lbl, c=color: w.configure(
-                bg=blend(DEEP, .12), fg=(c or T_PRIMARY_ON_DEEP)))
-            lbl.bind("<Leave>", lambda e, w=lbl: w.configure(bg=DEEP, fg=T_SECOND_ON_DEEP))
+        for text, cmd, danger in (("×", self.hide_to_tray, True), ("—", self._minimize, False)):
+            IconButton(bar, text, cmd, bg=DEEP, danger=danger).pack(
+                side="right", padx=(0, 4), pady=6)
 
         for w in (bar, title):
             w.bind("<ButtonPress-1>", self._drag_start)
@@ -425,213 +532,259 @@ class App(tk.Tk):
         self._drag = (e.x_root - self.winfo_x(), e.y_root - self.winfo_y())
 
     def _drag_move(self, e):
-        if not self._drag:
-            return
-        self.geometry(f"+{e.x_root - self._drag[0]}+{e.y_root - self._drag[1]}")
+        if self._drag:
+            self.geometry(f"+{e.x_root - self._drag[0]}+{e.y_root - self._drag[1]}")
 
+    # ------------------------------------------------------------ 中栏
     def _build_status(self, mid):
-        tk.Label(mid, text="当前状态", bg=MID, fg=T_MUTED, font=F_SMALL,
-                 anchor="w", padx=20).pack(fill="x", pady=(18, 4))
-        self.st_title = tk.Label(mid, text="检测中", bg=MID, fg=T_PRIMARY,
-                                 font=F_TITLE, anchor="w", padx=20)
+        tk.Label(mid, text="当前状态", bg=MID, fg=T3, font=F_SMALL,
+                 anchor="w", padx=20).pack(fill="x", pady=(16, 2))
+        self.st_title = tk.Label(mid, text="检测中", bg=MID, fg=T1, font=F_TITLE,
+                                 anchor="w", padx=20)
         self.st_title.pack(fill="x")
-        self.st_msg = tk.Label(mid, text="正在读取认证门户", bg=MID, fg=T_SECOND,
-                               font=F_BODY, anchor="w", justify="left",
-                               wraplength=250, padx=20, pady=6)
+        self.st_msg = tk.Label(mid, text="正在读取认证门户", bg=MID, fg=T2, font=F_BODY,
+                               anchor="w", justify="left", wraplength=252, padx=20, pady=4)
         self.st_msg.pack(fill="x")
 
         meta = tk.Frame(mid, bg=MID)
-        meta.pack(fill="x", padx=20, pady=(10, 0))
+        meta.pack(fill="x", padx=20, pady=(8, 0))
         self.st_ip = self._meta_row(meta, "终端 IP")
         self.st_up = self._meta_row(meta, "本次在线")
         self.st_last = self._meta_row(meta, "上次登录")
         self.st_count = self._meta_row(meta, "登录次数")
 
         btns = tk.Frame(mid, bg=MID)
-        btns.pack(fill="x", padx=20, pady=(18, 0))
-        self.btn_login = RoundRect(btns, "立即登录", self._do_login, bg=MID,
-                                   fill=ACCENT, accent=True, width=120, height=36)
+        btns.pack(fill="x", padx=20, pady=(16, 0))
+        self.btn_login = Button(btns, "立即登录", self._do_login, bg=MID,
+                                fill=ACCENT, width=260, height=38, accent=True)
         self.btn_login.pack(fill="x")
         row = tk.Frame(btns, bg=MID)
         row.pack(fill="x", pady=(8, 0))
-        self.btn_check = RoundRect(row, "重新检测", self._do_check, bg=MID,
-                                   fill=SURFACE, width=120, height=34)
+        self.btn_check = Button(row, "重新检测", self._do_check, bg=MID, fill=SURFACE,
+                                width=124, height=34)
         self.btn_check.pack(side="left", fill="x", expand=True)
-        self.btn_logout = RoundRect(row, "注销下线", self._do_logout, bg=MID,
-                                    fill=SURFACE, width=110, height=34, danger=True)
+        self.btn_logout = Button(row, "注销下线", self._do_logout, bg=MID, fill=SURFACE,
+                                 width=124, height=34)
         self.btn_logout.pack(side="left", fill="x", expand=True, padx=(8, 0))
-
-        foot = tk.Label(mid, text="", bg=MID, fg=T_MUTED, font=F_SMALL, anchor="w", padx=20)
-        foot.pack(side="bottom", fill="x", pady=(0, 14))
-        self.st_foot = foot
 
     def _meta_row(self, parent, label):
         row = tk.Frame(parent, bg=MID)
         row.pack(fill="x", pady=2)
-        tk.Label(row, text=label, bg=MID, fg=T_MUTED, font=F_SMALL,
+        tk.Label(row, text=label, bg=MID, fg=T3, font=F_SMALL,
                  width=8, anchor="w").pack(side="left")
-        val = tk.Label(row, text="—", bg=MID, fg=T_PRIMARY, font=F_BODY, anchor="w")
+        val = tk.Label(row, text="—", bg=MID, fg=T1, font=F_BODY, anchor="w")
         val.pack(side="left", fill="x", expand=True)
         return val
 
     # ------------------------------------------------------------ 视图
     def _build_views(self, parent):
+        self._views["welcome"] = self._view_welcome(parent)
         self._views["overview"] = self._view_overview(parent)
         self._views["settings"] = self._view_settings(parent)
         self._views["logs"] = self._view_logs(parent)
         self._views["about"] = self._view_about(parent)
 
     def _page_head(self, parent, title, sub=""):
-        tk.Label(parent, text=title, bg=SURFACE, fg=T_PRIMARY_ON_SURFACE,
-                 font=F_TITLE, anchor="w").pack(fill="x", padx=28, pady=(22, 2))
+        tk.Label(parent, text=title, bg=SURFACE, fg=T1_S, font=(FONT, 18, "bold"),
+                 anchor="w").pack(fill="x", padx=28, pady=(18, 2))
         if sub:
-            tk.Label(parent, text=sub, bg=SURFACE, fg=T_MUTED_ON_SURFACE,
-                     font=F_SMALL, anchor="w").pack(fill="x", padx=28)
+            tk.Label(parent, text=sub, bg=SURFACE, fg=T3_S, font=F_SMALL,
+                     anchor="w").pack(fill="x", padx=28)
 
-    def _card(self, parent, **kw):
-        return tk.Frame(parent, bg=MID, **kw)
+    # 首次使用引导
+    def _view_welcome(self, parent):
+        frame = tk.Frame(parent, bg=SURFACE)
+        box = tk.Frame(frame, bg=SURFACE)
+        box.place(relx=0.5, rely=0.46, anchor="center")
 
+        tk.Label(box, text="欢迎使用校园网助手", bg=SURFACE, fg=T1_S,
+                 font=(FONT, 22, "bold")).pack(anchor="w")
+        tk.Label(box, text="填写一次学号与密码，之后断网会自动帮你认证。",
+                 bg=SURFACE, fg=T2_S, font=F_BODY).pack(anchor="w", pady=(6, 18))
+
+        tk.Label(box, text="学号 / 工号", bg=SURFACE, fg=T2_S, font=F_SMALL).pack(anchor="w")
+        self.w_user = RoundedEntry(box, bg=SURFACE, fill=MID, height=38)
+        self.w_user.configure(width=360)
+        self.w_user.pack(fill="x", pady=(4, 12))
+
+        tk.Label(box, text="密码", bg=SURFACE, fg=T2_S, font=F_SMALL).pack(anchor="w")
+        self.w_pass = RoundedEntry(box, bg=SURFACE, fill=MID, height=38, show="•")
+        self.w_pass.configure(width=360)
+        self.w_pass.pack(fill="x", pady=(4, 6))
+
+        self.w_msg = tk.Label(box, text="", bg=SURFACE, fg=DANGER, font=F_SMALL, anchor="w")
+        self.w_msg.pack(fill="x")
+
+        Button(box, "保存并登录", self._welcome_submit, bg=SURFACE, fill=ACCENT,
+               accent=True, width=360, height=40, font=(FONT, 11, "bold")).pack(pady=(12, 0))
+        tk.Label(box, text="密码用 Windows DPAPI 加密保存在本机", bg=SURFACE,
+                 fg=T3_S, font=F_SMALL).pack(pady=(10, 0))
+        return frame
+
+    def _welcome_submit(self):
+        user = self.w_user.get().strip()
+        pw = self.w_pass.get()
+        if not user:
+            self.w_msg.configure(text="请输入学号 / 工号")
+            self.w_user.focus()
+            return
+        if not pw:
+            self.w_msg.configure(text="请输入密码")
+            self.w_pass.focus()
+            return
+        self._first_run = False
+        self.engine.update_config({"user": user, "password": pw})
+        self._sync_settings()
+        self._switch("overview")
+        threading.Thread(target=self.engine.login, daemon=True).start()
+
+    # 总览
     def _view_overview(self, parent):
         frame = tk.Frame(parent, bg=SURFACE)
         self._page_head(frame, "概览", "认证状态、连接详情与最近活动")
 
-        cards = tk.Frame(frame, bg=SURFACE)
-        cards.pack(fill="x", padx=28, pady=(16, 0))
-        self._ov_auth = self._stat_card(cards, "认证状态")
-        self._ov_uptime = self._stat_card(cards, "本次在线")
-        self._ov_conn = self._stat_card(cards, "外网连通")
+        row = tk.Frame(frame, bg=SURFACE)
+        row.pack(fill="x", padx=28, pady=(16, 0))
+        self._ov_auth = self._stat_card(row, "认证状态")
+        self._ov_uptime = self._stat_card(row, "本次在线")
+        self._ov_conn = self._stat_card(row, "外网连通")
 
-        tk.Label(frame, text="最近活动", bg=SURFACE, fg=T_SECOND_ON_SURFACE,
-                 font=F_HEAD, anchor="w").pack(fill="x", padx=28, pady=(22, 8))
-        self._ov_log = tk.Text(frame, bg=MID, fg=T_SECOND, font=F_MONO, bd=0,
-                               highlightthickness=0, height=10, wrap="none",
-                               padx=12, pady=10, insertwidth=0)
-        self._ov_log.pack(fill="both", expand=True, padx=28, pady=(0, 22))
-        self._ov_log.configure(state="disabled")
+        head = tk.Frame(frame, bg=SURFACE)
+        head.pack(fill="x", padx=28, pady=(20, 8))
+        tk.Label(head, text="最近活动", bg=SURFACE, fg=T2_S, font=F_HEAD).pack(side="left")
+
+        holder = tk.Frame(frame, bg=SURFACE)
+        holder.pack(fill="both", expand=True, padx=28, pady=(0, 22))
+        self._ov_log = RoundedText(holder, bg=SURFACE, fill=MID, height=180)
+        self._ov_log.pack(fill="both", expand=True)
+        self._ov_log.text.configure(state="disabled")
+        self._ov_log.text.tag_configure("ok", foreground="#5fd38d")
+        self._ov_log.text.tag_configure("warn", foreground="#e7c46b")
+        self._ov_log.text.tag_configure("error", foreground="#ff8a80")
+        self._ov_log.text.tag_configure("time", foreground=T3)
         return frame
 
     def _stat_card(self, parent, label):
-        card = tk.Frame(parent, bg=MID)
+        card = Card(parent, bg=SURFACE, fill=MID, radius=RADIUS_CARD, padding=14)
         card.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        tk.Label(card, text=label, bg=MID, fg=T_MUTED, font=F_SMALL,
-                 anchor="w", padx=14).pack(fill="x", pady=(12, 2))
-        val = tk.Label(card, text="—", bg=MID, fg=T_PRIMARY, font=F_HEAD,
-                       anchor="w", padx=14)
-        val.pack(fill="x", pady=(0, 12))
+        tk.Label(card.body, text=label, bg=MID, fg=T3, font=F_SMALL, anchor="w").pack(fill="x")
+        val = tk.Label(card.body, text="—", bg=MID, fg=T1, font=(FONT, 14, "bold"), anchor="w")
+        val.pack(fill="x", pady=(4, 0))
+        card.configure(height=78)
+        card.pack_propagate(False)
         return val
 
+    # 日志
     def _view_logs(self, parent):
         frame = tk.Frame(parent, bg=SURFACE)
         head = tk.Frame(frame, bg=SURFACE)
-        head.pack(fill="x", padx=28, pady=(22, 8))
-        tk.Label(head, text="运行日志", bg=SURFACE, fg=T_PRIMARY_ON_SURFACE,
-                 font=F_TITLE, anchor="w").pack(side="left")
-        RoundRect(head, "清空", self._clear_logs, bg=SURFACE, fill=MID,
-                  width=72, height=30, font=F_SMALL).pack(side="right")
+        head.pack(fill="x", padx=28, pady=(22, 10))
+        tk.Label(head, text="运行日志", bg=SURFACE, fg=T1_S, font=F_TITLE).pack(side="left")
+        Button(head, "清空", self._clear_logs, bg=SURFACE, fill=MID,
+               width=72, height=30, font=F_SMALL).pack(side="right")
 
-        self._log_text = tk.Text(frame, bg=MID, fg=T_SECOND, font=F_MONO, bd=0,
-                                 highlightthickness=0, wrap="word",
-                                 padx=12, pady=10, insertwidth=0)
-        self._log_text.pack(fill="both", expand=True, padx=28, pady=(0, 22))
-        self._log_text.configure(state="disabled")
-        self._log_text.tag_configure("ok", foreground="#5fd38d")
-        self._log_text.tag_configure("warn", foreground="#e7c46b")
-        self._log_text.tag_configure("error", foreground="#ff8a80")
-        self._log_text.tag_configure("time", foreground=T_MUTED)
+        holder = tk.Frame(frame, bg=SURFACE)
+        holder.pack(fill="both", expand=True, padx=28, pady=(0, 22))
+        self._log_view = RoundedText(holder, bg=SURFACE, fill=MID)
+        self._log_view.pack(fill="both", expand=True)
+        self._log_view.text.configure(state="disabled")
+        self._log_view.text.tag_configure("ok", foreground="#5fd38d")
+        self._log_view.text.tag_configure("warn", foreground="#e7c46b")
+        self._log_view.text.tag_configure("error", foreground="#ff8a80")
+        self._log_view.text.tag_configure("time", foreground=T3)
         return frame
 
+    # 设置
     def _view_settings(self, parent):
         outer = tk.Frame(parent, bg=SURFACE)
         self._page_head(outer, "设置", "修改后点底部保存生效")
 
+        bar = tk.Frame(outer, bg=SURFACE)
+        bar.pack(side="bottom", fill="x", padx=28, pady=10)
+        Button(bar, "保存设置", self._save_settings, bg=SURFACE, fill=ACCENT,
+               accent=True, width=140, height=36).pack(side="right")
+
         body = tk.Frame(outer, bg=SURFACE)
-        body.pack(fill="both", expand=True, padx=28, pady=(14, 0))
+        body.pack(fill="both", expand=True, padx=28, pady=(8, 0))
 
+        tk.Label(body, text="账号", bg=SURFACE, fg=T3_S, font=F_SMALL_B,
+                 anchor="w").pack(fill="x", pady=(0, 6))
         self.v_user = self._field(body, "学号 / 工号")
-        self.v_pass = self._field(body, "密码", secret=True,
-                                  hint="已保存（留空不修改）")
-        self.v_remember = self._make_switch(body, "记住密码", "使用 Windows DPAPI 加密保存在本机")
+        self.v_pass = self._field(body, "密码", secret=True)
+        self.v_remember = self._make_switch(body, "记住密码", "用 DPAPI 加密保存在本机", compact=True)
 
-        tk.Label(body, text="自动认证", bg=SURFACE, fg=T_MUTED_ON_SURFACE,
-                 font=F_SMALL, anchor="w").pack(fill="x", pady=(16, 4))
+        tk.Label(body, text="自动认证", bg=SURFACE, fg=T3_S, font=F_SMALL_B,
+                 anchor="w").pack(fill="x", pady=(10, 4))
         self.v_auto = self._make_switch(body, "断网自动登录", "检测到未认证时自动提交账号密码")
 
-        row = tk.Frame(body, bg=SURFACE)
-        row.pack(fill="x", pady=(10, 0))
-        tk.Label(row, text="检测周期", bg=SURFACE, fg=T_SECOND_ON_SURFACE,
-                 font=F_BODY, width=8, anchor="w").pack(side="left")
-        self.v_interval = Slider(row, self.engine.cfg.get("interval", 20), 5, 180, 5,
+        srow = tk.Frame(body, bg=SURFACE)
+        srow.pack(fill="x", pady=(10, 0))
+        tk.Label(srow, text="检测周期", bg=SURFACE, fg=T2_S, font=F_BODY,
+                 width=8, anchor="w").pack(side="left")
+        self.v_interval = Slider(srow, self._pending_interval, 5, 180, 5,
                                  command=self._on_interval, bg=SURFACE, width=220)
         self.v_interval.pack(side="left")
-        self.v_interval_label = tk.Label(row, text=f"{self.engine.cfg.get('interval', 20)} 秒",
-                                         bg=SURFACE, fg=T_PRIMARY_ON_SURFACE,
-                                         font=F_BODY, width=8, anchor="e")
+        self.v_interval_label = tk.Label(srow, text=f"{self._pending_interval} 秒",
+                                         bg=SURFACE, fg=T1_S, font=F_BODY, width=7, anchor="e")
         self.v_interval_label.pack(side="right")
 
-        row2 = tk.Frame(body, bg=SURFACE)
-        row2.pack(fill="x", pady=(10, 0))
-        self.v_timeout = self._field_inline(row2, "请求超时（秒）", self.engine.cfg.get("timeout", 6))
-        self.v_retry = self._field_inline(row2, "失败重试", self.engine.cfg.get("retry", 3))
+        rrow = tk.Frame(body, bg=SURFACE)
+        rrow.pack(fill="x", pady=(10, 0))
+        self.v_timeout = self._field_inline(rrow, "请求超时（秒）", self.engine.cfg.get("timeout", 6))
+        self.v_retry = self._field_inline(rrow, "失败重试", self.engine.cfg.get("retry", 3))
 
-        self.v_base = self._field(body, "认证门户地址", value=self.engine.cfg.get("base_url", ""))
+        self.v_base = self._field(body, "认证门户地址")
 
-        tk.Label(body, text="系统", bg=SURFACE, fg=T_MUTED_ON_SURFACE,
-                 font=F_SMALL, anchor="w").pack(fill="x", pady=(16, 4))
-        self.v_startup = self._make_switch(body, "开机自动运行", "登录后静默启动，只驻留托盘")
-        self.v_autoclose = self._make_switch(body, "关闭时退出", "关掉窗口就结束进程（否则收进托盘）")
+        tk.Label(body, text="系统", bg=SURFACE, fg=T3_S, font=F_SMALL_B,
+                 anchor="w").pack(fill="x", pady=(10, 4))
+        pair = tk.Frame(body, bg=SURFACE)
+        pair.pack(fill="x")
+        self.v_startup = self._make_switch(pair, "开机自动运行", "", side="left")
+        self.v_autoclose = self._make_switch(pair, "关闭时退出", "", side="left")
 
-        bar = tk.Frame(outer, bg=SURFACE)
-        bar.pack(fill="x", padx=28, pady=14)
-        RoundRect(bar, "保存设置", self._save_settings, bg=SURFACE, fill=ACCENT,
-                  accent=True, width=140, height=36).pack(side="right")
-
-        self._pending_interval = self.engine.cfg.get("interval", 20)
         return outer
 
-    def _field(self, parent, label, *, value="", secret=False, hint=""):
-        tk.Label(parent, text=label, bg=SURFACE, fg=T_SECOND_ON_SURFACE,
-                 font=F_SMALL, anchor="w").pack(fill="x", pady=(8, 3))
-        entry = tk.Entry(parent, bg=MID, fg=T_PRIMARY, font=F_BODY, bd=0,
-                         highlightthickness=0, insertbackground=T_PRIMARY,
-                         relief="flat")
-        entry.pack(fill="x", ipady=7, padx=0)
-        entry.insert(0, value)
-        if secret:
-            entry.configure(show="•")
-            if hint:
-                entry.configure(fg=T_SECOND)
+    def _field(self, parent, label, *, secret=False):
+        tk.Label(parent, text=label, bg=SURFACE, fg=T2_S, font=F_SMALL,
+                 anchor="w").pack(fill="x", pady=(4, 3))
+        entry = RoundedEntry(parent, bg=SURFACE, fill=MID, height=32,
+                             show="•" if secret else None)
+        entry.pack(fill="x")
         return entry
 
     def _field_inline(self, parent, label, value):
         box = tk.Frame(parent, bg=SURFACE)
         box.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        tk.Label(box, text=label, bg=SURFACE, fg=T_SECOND_ON_SURFACE,
-                 font=F_SMALL, anchor="w").pack(fill="x", pady=(0, 3))
-        entry = tk.Entry(box, bg=MID, fg=T_PRIMARY, font=F_BODY, bd=0,
-                         highlightthickness=0, insertbackground=T_PRIMARY)
-        entry.pack(fill="x", ipady=6)
-        entry.insert(0, str(value))
+        tk.Label(box, text=label, bg=SURFACE, fg=T2_S, font=F_SMALL,
+                 anchor="w").pack(fill="x", pady=(0, 4))
+        entry = RoundedEntry(box, bg=SURFACE, fill=MID, height=32)
+        entry.pack(fill="x")
+        entry.set(str(value))
         return entry
 
-    def _make_switch(self, parent, label, sub):
+    def _make_switch(self, parent, label, sub="", *, compact=False, side=None):
         row = tk.Frame(parent, bg=SURFACE)
-        row.pack(fill="x", pady=3)
+        if side:
+            row.pack(side=side, fill="x", expand=True, pady=3, padx=(0, 8))
+        else:
+            row.pack(fill="x", pady=3)
         txt = tk.Frame(row, bg=SURFACE)
         txt.pack(side="left", fill="x", expand=True)
-        tk.Label(txt, text=label, bg=SURFACE, fg=T_PRIMARY_ON_SURFACE,
-                 font=F_BODY, anchor="w").pack(fill="x")
-        tk.Label(txt, text=sub, bg=SURFACE, fg=T_MUTED_ON_SURFACE,
-                 font=F_SMALL, anchor="w").pack(fill="x")
+        tk.Label(txt, text=label, bg=SURFACE, fg=T1_S, font=F_BODY, anchor="w").pack(fill="x")
+        if sub:
+            tk.Label(txt, text=sub, bg=SURFACE, fg=T3_S, font=F_SMALL, anchor="w").pack(fill="x")
         toggle = Toggle(row, False, bg=SURFACE)
         toggle.pack(side="right", padx=(10, 2))
         return toggle
 
+    # 关于
     def _view_about(self, parent):
         frame = tk.Frame(parent, bg=SURFACE)
         self._page_head(frame, "关于", "Tk 原生界面版 · GPL-3.0")
         lines = [
-            ("版本", "v2.0.0（Tk 版）"),
+            ("版本", "v2.1.0（Tk 版）"),
             ("界面", "tkinter 原生控件，无 WebView、无本地 HTTP 服务"),
+            ("字体", "系统黑体（微软雅黑），仅用字重区分层级"),
             ("许可证", "GNU General Public License v3.0"),
             ("仓库", "github.com/Heznc/campus-net-assistant-tk"),
             ("数据目录", store.DATA_DIR),
@@ -639,13 +792,16 @@ class App(tk.Tk):
         for key, val in lines:
             row = tk.Frame(frame, bg=SURFACE)
             row.pack(fill="x", padx=28, pady=6)
-            tk.Label(row, text=key, bg=SURFACE, fg=T_MUTED_ON_SURFACE,
-                     font=F_SMALL, width=8, anchor="w").pack(side="left")
-            tk.Label(row, text=val, bg=SURFACE, fg=T_SECOND_ON_SURFACE,
-                     font=F_BODY, anchor="w", justify="left").pack(side="left")
+            tk.Label(row, text=key, bg=SURFACE, fg=T3_S, font=F_SMALL,
+                     width=8, anchor="w").pack(side="left")
+            tk.Label(row, text=val, bg=SURFACE, fg=T2_S, font=F_BODY,
+                     anchor="w", justify="left").pack(side="left")
         return frame
 
     # ------------------------------------------------------------ 行为
+    def _switch_manual(self, key):
+        self._switch(key)
+
     def _switch(self, key):
         self._current = key
         for name, frame in self._views.items():
@@ -664,23 +820,26 @@ class App(tk.Tk):
         threading.Thread(target=self.engine.check, daemon=True).start()
 
     def _do_login(self):
-        user = self.v_user.get().strip() if self._current == "settings" else None
-        threading.Thread(target=self.engine.login, kwargs={"user": user or None},
-                         daemon=True).start()
+        if self._first_run:
+            self._switch("welcome")
+            self.w_user.focus()
+        forced = os.environ.get("CNA_TK_VIEW")
+        if forced in ("overview", "settings", "logs", "about"):
+            self._switch(forced)
+            return
+        threading.Thread(target=self.engine.login, daemon=True).start()
 
     def _do_logout(self):
-        if not self._confirm("确定注销当前上网认证？"):
+        from tkinter import messagebox
+        if not messagebox.askyesno("校园网助手", "确定注销当前上网认证？", parent=self):
             return
         threading.Thread(target=self.engine.logout, daemon=True).start()
 
-    def _confirm(self, text):
-        from tkinter import messagebox
-        return messagebox.askyesno("校园网助手", text, parent=self)
-
     def _clear_logs(self):
-        self._log_text.configure(state="normal")
-        self._log_text.delete("1.0", "end")
-        self._log_text.configure(state="disabled")
+        t = self._log_view.text
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+        t.configure(state="disabled")
 
     def _on_interval(self, value):
         self._pending_interval = value
@@ -699,25 +858,28 @@ class App(tk.Tk):
         try:
             patch["timeout"] = int(self.v_timeout.get())
             patch["retry"] = int(self.v_retry.get())
-        except ValueError:
+        except (TypeError, ValueError):
             pass
         pw = self.v_pass.get()
         if pw:
             patch["password"] = pw
         self.engine.update_config(patch)
-        self.v_pass.delete(0, "end")
+        self.v_pass.clear()
+        if patch["user"] and (pw or self._has_credentials()):
+            self._first_run = False
+        self._sync_settings()
         self._refresh()
 
     def _sync_settings(self):
         cfg = self.engine.cfg
-        self.v_user.delete(0, "end")
-        self.v_user.insert(0, cfg.get("user", ""))
-        self.v_base.delete(0, "end")
-        self.v_base.insert(0, cfg.get("base_url", ""))
-        self.v_timeout.delete(0, "end")
-        self.v_timeout.insert(0, str(cfg.get("timeout", 6)))
-        self.v_retry.delete(0, "end")
-        self.v_retry.insert(0, str(cfg.get("retry", 3)))
+        self.v_user.set(cfg.get("user", ""))
+        self.v_base.set(cfg.get("base_url", ""))
+        self.v_timeout.set(str(cfg.get("timeout", 6)))
+        self.v_retry.set(str(cfg.get("retry", 3)))
+        self._pending_interval = int(cfg.get("interval", 20))
+        self.v_interval._value = self._pending_interval
+        self.v_interval._paint()
+        self.v_interval_label.configure(text=f"{self._pending_interval} 秒")
         for widget, value in ((self.v_remember, cfg.get("remember", True)),
                               (self.v_auto, cfg.get("auto_login", True)),
                               (self.v_startup, store.get_autostart()),
@@ -728,54 +890,54 @@ class App(tk.Tk):
     # ------------------------------------------------------------ 刷新
     def _tick(self):
         try:
-            st = self.engine.snapshot()
-            sig = (st["phase"], st["authenticated"], st["ip"], st["message"],
-                   st["login_count"], st["last_login"], len(self.engine.logs))
-            if sig != self._sig:
-                self._sig = sig
-                self._render(st)
-            else:
-                self._render_dynamic(st)
+            self._refresh()
         except Exception:                               # noqa: BLE001
             pass
         self.after(1000, self._tick)
 
-    def _render_dynamic(self, st):
-        up = self._fmt_dur(st["online_seconds"]) if st["authenticated"] else "—"
-        self.st_up.configure(text=up)
-        if self._current == "overview":
-            self._ov_uptime.configure(text=up)
+    def _refresh(self):
+        st = self.engine.snapshot()
+        sig = (st["phase"], st["authenticated"], st["ip"], st["message"],
+               st["login_count"], st["last_login"], len(self.engine.logs))
+        if sig == self._sig:
+            up = self._fmt_dur(st["online_seconds"]) if st["authenticated"] else "—"
+            self.st_up.configure(text=up)
+            if self._current == "overview":
+                self._ov_uptime.configure(text=up)
+            return
+        self._sig = sig
+        self._render(st)
 
     def _render(self, st):
-        phase_titles = {
-            "online": "网络已连接", "offline": "需要上网认证",
-            "logging_in": "正在认证", "checking": "正在检测",
-            "error": "认证门户不可达", "idle": "准备就绪",
-        }
-        self.st_title.configure(text=phase_titles.get(st["phase"], "准备就绪"))
+        titles = {"online": "网络已连接", "offline": "需要上网认证",
+                  "logging_in": "正在认证", "checking": "正在检测",
+                  "error": "认证门户不可达", "idle": "准备就绪"}
+        self.st_title.configure(text=titles.get(st["phase"], "准备就绪"))
         self.st_msg.configure(text=st["message"] or "")
         self.st_ip.configure(text=st["ip"] or "—")
         self.st_last.configure(text=self._fmt_time(st["last_login"]))
         self.st_count.configure(text=str(st["login_count"]))
-        self._render_dynamic(st)
+        up = self._fmt_dur(st["online_seconds"]) if st["authenticated"] else "—"
+        self.st_up.configure(text=up)
+        if self._current == "overview":
+            self._ov_uptime.configure(text=up)
+            self._ov_auth.configure(text="已认证" if st["authenticated"] else "未认证")
+            self._ov_conn.configure(text="可达" if st["internet"]
+                                    else ("内网" if st["portal_reachable"] else "断开"))
 
         state_text = "已认证" if st["authenticated"] else (
             "待认证" if st["portal_reachable"] else "未连接")
         self.side_status.configure(
             text=f"● {state_text}",
             fg="#5fd38d" if st["authenticated"] else
-               ("#e7c46b" if st["portal_reachable"] else T_MUTED_ON_DEEP))
-
-        self._ov_auth.configure(text="已认证" if st["authenticated"] else "未认证")
-        self._ov_conn.configure(text="可达" if st["internet"] else ("内网" if st["portal_reachable"] else "断开"))
-
+               ("#e7c46b" if st["portal_reachable"] else T3_D))
         self._render_logs()
 
-    def _render_logs(self, full: bool = False):
-        view = self._ov_log if not full else self._log_text
-        view.configure(state="normal")
+    def _render_logs(self, full=False):
+        widget = self._ov_log.text if not full else self._log_view.text
+        widget.configure(state="normal")
         if full:
-            view.delete("1.0", "end")
+            widget.delete("1.0", "end")
             entries = self.engine.logs[-200:]
         else:
             entries = [e for e in self.engine.logs if e["seq"] > self._last_seq][-8:]
@@ -783,10 +945,10 @@ class App(tk.Tk):
                 self._last_seq = entries[-1]["seq"]
         for e in entries:
             tag = e["level"] if e["level"] in ("ok", "warn", "error") else ""
-            view.insert("end", f"{e['t']}  ", "time")
-            view.insert("end", e["msg"] + "\n", tag)
-        view.see("end")
-        view.configure(state="disabled")
+            widget.insert("end", f"{e['t']}  ", "time")
+            widget.insert("end", e["msg"] + "\n", tag)
+        widget.see("end")
+        widget.configure(state="disabled")
 
     @staticmethod
     def _fmt_dur(sec):
@@ -794,22 +956,17 @@ class App(tk.Tk):
         if sec < 60:
             return f"{sec} 秒"
         m, h = sec // 60, sec // 3600
-        if h:
-            return f"{h} 小时 {m % 60} 分"
-        return f"{m} 分 {sec % 60} 秒"
+        return f"{h} 小时 {m % 60} 分" if h else f"{m} 分 {sec % 60} 秒"
 
     @staticmethod
     def _fmt_time(ts):
-        if not ts:
-            return "—"
-        return time.strftime("%m-%d %H:%M", time.localtime(ts))
+        return time.strftime("%m-%d %H:%M", time.localtime(ts)) if ts else "—"
 
 
 def acquire_single_instance() -> bool:
-    """命名互斥体，保证只跑一个实例。"""
     try:
         handle = ctypes.windll.kernel32.CreateMutexW(None, False, "CampusNetAssistantTK")
-        if ctypes.windll.kernel32.GetLastError() == 183:      # ERROR_ALREADY_EXISTS
+        if ctypes.windll.kernel32.GetLastError() == 183:
             return False
         globals()["_MUTEX"] = handle
         return True
