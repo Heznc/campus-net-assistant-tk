@@ -1060,6 +1060,9 @@ class App(tk.Tk):
             h_small = u.LoadImageW(None, icon, IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
             u.SendMessageW.restype = ctypes.c_void_p
             u.SendMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+            # 任务栏按钮有时读的是窗口「类」图标，而不是窗口图标
+            u.SetClassLongPtrW.restype = ctypes.c_void_p
+            u.SetClassLongPtrW.argtypes = [wt.HWND, ctypes.c_int, ctypes.c_void_p]
 
             pid = ctypes.windll.kernel32.GetCurrentProcessId()
 
@@ -1074,8 +1077,10 @@ class App(tk.Tk):
                     return True
                 if h_big:
                     u.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_big)
+                    u.SetClassLongPtrW(hwnd, -14, h_big)      # GCLP_HICON
                 if h_small:
                     u.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_small)
+                    u.SetClassLongPtrW(hwnd, -34, h_small)    # GCLP_HICONSM
                 return True
 
             proc = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)(fix)
