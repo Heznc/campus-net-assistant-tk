@@ -149,11 +149,12 @@ def squircle_points(x0: float, y0: float, w: float, h: float, r: float,
     return pts
 
 
-def _squircle_photo(w: int, h: int, r: int, fill: str, ss: int = 4):
-    key = ("sq", w, h, r, fill)
+def _squircle_photo(w: int, h: int, r: int, fill: str, bg: str | None = None, ss: int = 4):
+    """圆角矩形图：直接压到底色上输出不透明图，避免透明像素在浅色主题下边黑。"""
+    key = ("sq", w, h, r, fill, bg)
     if key in _IMG_CACHE:
         return _IMG_CACHE[key]
-    img = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
+    img = Image.new("RGB", (w * ss, h * ss), bg or fill)
     d = ImageDraw.Draw(img)
     poly = squircle_points(0, 0, w * ss - 1, h * ss - 1, r * ss)
     d.polygon(poly, fill=fill)
@@ -163,18 +164,18 @@ def _squircle_photo(w: int, h: int, r: int, fill: str, ss: int = 4):
     return photo
 
 
-def _corner_mask(size: int, r: int, color: str, corner: str):
-    """生成 r×r 的角落遮罩：圆角外侧填父级底色，内侧透明。"""
-    key = ("mask", size, r, color, corner)
+def _corner_mask(size: int, r: int, outer: str, inner: str, corner: str):
+    """角落补丁：圆弧外侧填 outer、内侧填 inner，输出不透明图（抗锯齿）。"""
+    key = ("mask", size, r, outer, inner, corner)
     if key in _IMG_CACHE:
         return _IMG_CACHE[key]
     if not HAS_PIL:
         return None
     ss = 4
     big = size * ss
-    img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    img = Image.new("RGB", (big, big), outer)
     px = img.load()
-    rgb = tuple(int(color.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    rgb_in = tuple(int(inner.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
     for y in range(big):
         for x in range(big):
             if corner == "tr":
@@ -188,11 +189,10 @@ def _corner_mask(size: int, r: int, color: str, corner: str):
             u /= ss
             v /= ss
             if u >= r or v >= r:
-                px[x, y] = (rgb[0], rgb[1], rgb[2], 255)
+                px[x, y] = rgb_in
                 continue
-            inside = ((r - u) / r) ** SQUIRCLE_N + ((r - v) / r) ** SQUIRCLE_N <= 1.0
-            if not inside:
-                px[x, y] = (rgb[0], rgb[1], rgb[2], 255)
+            if ((r - u) / r) ** SQUIRCLE_N + ((r - v) / r) ** SQUIRCLE_N <= 1.0:
+                px[x, y] = rgb_in
     img = img.resize((size, size), Image.LANCZOS)
     photo = ImageTk.PhotoImage(img)
     _IMG_CACHE[key] = photo
@@ -204,7 +204,11 @@ def draw_round(canvas: tk.Canvas, x: int, y: int, w: int, h: int, r: int,
     """在 canvas 上画一块抗锯齿的**超椭圆**圆角。没有 PIL 时退化为多边形。"""
     r = max(0, min(r, min(w, h) // 2))
     if HAS_PIL and w > 1 and h > 1:
-        canvas.create_image(x, y, image=_squircle_photo(w, h, r, fill), anchor="nw",
+        try:
+            bg = canvas.cget("bg")
+        except Exception:                           # noqa: BLE001
+            bg = None
+        canvas.create_image(x, y, image=_squircle_photo(w, h, r, fill, bg), anchor="nw",
                             tags=tag)
     else:
         pts = squircle_points(x, y, w - 1, h - 1, r, steps=8)
@@ -313,6 +317,7 @@ class Card(tk.Frame):
         fill = fill or MID
         super().__init__(master, bg=bg)
         self._bg = bg
+        self._fill = fill
         self._radius = radius
         self._canvas = RoundCanvas(self, bg=bg, fill=fill, radius=radius)
         self._canvas.pack(fill="both", expand=True)
@@ -332,7 +337,7 @@ class Card(tk.Frame):
         self._masks = []
         for corner, pos in (("tl", (0, 0)), ("tr", (w - r, 0)),
                             ("bl", (0, h - r)), ("br", (w - r, h - r))):
-            photo = _corner_mask(r, r, self._bg, corner)
+            photo = _corner_mask(r, r, self._bg, self._fill, corner)
             if photo is not None:
                 self._masks.append(self._canvas.create_image(pos[0], pos[1], image=photo,
                                                              anchor="nw"))
@@ -682,35 +687,45 @@ class StatusRing(tk.Canvas):
         self._render(self.COLORS[key])
 
     def _render(self, color: str):
+        """光晕只模糊 alpha 通道，颜色保持纯净（否则透明像素会把光晕拖成灰色）。"""
         self.delete("all")
         size = self._size
-        if HAS_PIL:
-            ss = 4
-            big = size * ss
-            img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
-            d = ImageDraw.Draw(img)
-            pad = 6 * ss
-            box = (pad, pad, big - pad - 1, big - pad - 1)
-            # 外发光
-            d.ellipse(box, outline=color, width=5 * ss)
-            glow = img.filter(ImageFilter.GaussianBlur(4 * ss))
-            # 主环
-            ring = Image.new("RGBA", (big, big), (0, 0, 0, 0))
-            dr = ImageDraw.Draw(ring)
-            dr.ellipse(box, outline=color, width=3 * ss)
-            # 中心点
-            cx = cy = big / 2
-            r = 4.5 * ss
-            dr.ellipse((cx - r, cy - r, cx + r, cy + r), fill=color)
-            img = Image.alpha_composite(glow, ring)
-            img = img.resize((size, size), Image.LANCZOS)
-            photo = ImageTk.PhotoImage(img)
-            self._photo = photo
-            self.create_image(0, 0, image=photo, anchor="nw")
-        else:
+        if not HAS_PIL:
             pad = 6
             self.create_oval(pad, pad, size - pad, size - pad, outline=color, width=3)
             self.create_oval(size / 2 - 4, size / 2 - 4, size / 2 + 4, size / 2 + 4, fill=color)
+            return
+
+        ss = 4
+        big = size * ss
+        pad = 6 * ss
+        box = (pad, pad, big - pad - 1, big - pad - 1)
+
+        # 光晕：先画 alpha 蒙版，再按状态色着色
+        mask = Image.new("L", (big, big), 0)
+        ImageDraw.Draw(mask).ellipse(box, outline=255, width=5 * ss)
+        mask = mask.filter(ImageFilter.GaussianBlur(4 * ss))
+
+        base = Image.new("RGB", (big, big), self._bg)
+        glow = Image.new("RGB", (big, big), color)
+        base.paste(glow, (0, 0), mask)
+
+        # 主环 + 中心点
+        ring = Image.new("L", (big, big), 0)
+        rd = ImageDraw.Draw(ring)
+        rd.ellipse(box, outline=255, width=3 * ss)
+        base.paste(Image.new("RGB", (big, big), color), (0, 0), ring)
+
+        cx = cy = big / 2
+        r = 4.5 * ss
+        dot = Image.new("L", (big, big), 0)
+        ImageDraw.Draw(dot).ellipse((cx - r, cy - r, cx + r, cy + r), fill=255)
+        base.paste(Image.new("RGB", (big, big), color), (0, 0), dot)
+
+        img = base.resize((size, size), Image.LANCZOS)
+        photo = ImageTk.PhotoImage(img)
+        self._photo = photo
+        self.create_image(0, 0, image=photo, anchor="nw")
 
 
 class IconButton(tk.Canvas):
