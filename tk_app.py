@@ -603,6 +603,77 @@ class IconButton(tk.Canvas):
 
 
 # ---------------------------------------------------------------- 主窗口
+class AskDialog(tk.Toplevel):
+    """无边框三选一对话框，返回 save / discard / cancel。"""
+
+    def __init__(self, master, title: str, message: str,
+                 save_text="保存", discard_text="不保存", cancel_text="取消"):
+        super().__init__(master)
+        self.result = "cancel"
+        self.withdraw()
+        self.overrideredirect(True)
+        self.configure(bg=MID)
+        self.attributes("-topmost", True)
+        self._master = master
+
+        wrap = tk.Frame(self, bg=MID, padx=24, pady=20)
+        wrap.pack(fill="both", expand=True)
+        tk.Label(wrap, text=title, bg=MID, fg=T1, font=(FONT, 13, "bold"),
+                 anchor="w").pack(fill="x")
+        tk.Label(wrap, text=message, bg=MID, fg=T2, font=F_SMALL, anchor="w",
+                 justify="left", wraplength=320).pack(fill="x", pady=(6, 16))
+
+        row = tk.Frame(wrap, bg=MID)
+        row.pack(fill="x")
+        Button(row, cancel_text, lambda: self._done("cancel"), bg=MID, fill=SURFACE,
+               width=76, height=32, font=F_SMALL).pack(side="right", padx=(8, 0))
+        Button(row, discard_text, lambda: self._done("discard"), bg=MID, fill=SURFACE,
+               width=84, height=32, font=F_SMALL).pack(side="right", padx=(8, 0))
+        Button(row, save_text, lambda: self._done("save"), bg=MID, fill=ACCENT,
+               accent=True, width=76, height=32, font=F_SMALL).pack(side="right")
+
+        self.update_idletasks()
+        w, h = max(360, self.winfo_reqwidth()), self.winfo_reqheight()
+        mx = master.winfo_rootx() + (master.winfo_width() - w) // 2
+        my = master.winfo_rooty() + (master.winfo_height() - h) // 2
+        self.geometry("%dx%d+%d+%d" % (w, h, mx, my))
+        self.deiconify()
+        self.lift()
+        self.grab_set()
+        self._round()
+
+    def _round(self):
+        try:
+            hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
+            w, h = self.winfo_width(), self.winfo_height()
+            arr = (ctypes.c_long * 4)(0, 0, w, h)
+            rgn = ctypes.windll.gdi32.CreatePolygonRgn(
+                (ctypes.c_long * (len(squircle_points(0, 0, w, h, 18, steps=24)) * 2))(),
+                0, 2)
+            pts = squircle_points(0, 0, w, h, 18, steps=24)
+            flat = [int(v) for pt in pts for v in pt]
+            self._pts = (ctypes.c_long * len(flat))(*flat)
+            rgn = ctypes.windll.gdi32.CreatePolygonRgn(self._pts, len(pts), 2)
+            ctypes.windll.user32.SetWindowRgn(hwnd, rgn, True)
+        except Exception:                               # noqa: BLE001
+            pass
+
+    def _done(self, value):
+        self.result = value
+        try:
+            self.grab_release()
+        except Exception:                               # noqa: BLE001
+            pass
+        self.destroy()
+
+    def ask(self) -> str:
+        try:
+            self.wait_window(self)
+        except Exception:                               # noqa: BLE001
+            pass
+        return self.result
+
+
 class App(tk.Tk):
     def __init__(self, engine: Engine, start_hidden: bool = False):
         super().__init__()
@@ -1055,13 +1126,15 @@ class App(tk.Tk):
 
     # 设置
     def _view_settings(self, parent):
-        scroll = ScrollFrame(parent, bg=SURFACE)
+        view = tk.Frame(parent, bg=SURFACE)
+        scroll = ScrollFrame(view, bg=SURFACE)
+        scroll.pack(fill="both", expand=True, pady=(0, 50))
         if not hasattr(self, "_scrolls"):
             self._scrolls = []
         self._scrolls.append(scroll)
         outer = scroll.inner
         self._page_head(outer, "设置", "修改后点底部保存生效")
-        outer.winfo_children()[0].pack_configure(pady=(12, 2))
+        outer.winfo_children()[0].pack_configure(pady=(8, 0))
 
         body = tk.Frame(outer, bg=SURFACE)
         body.pack(fill="both", expand=True, padx=18, pady=(2, 0))
@@ -1073,11 +1146,11 @@ class App(tk.Tk):
         self.v_remember = self._make_switch(body, "记住密码", "用 DPAPI 加密保存在本机", compact=True)
 
         tk.Label(body, text="自动认证", bg=SURFACE, fg=T3_S, font=F_SMALL_B,
-                 anchor="w").pack(fill="x", pady=(6, 3))
-        self.v_auto = self._make_switch(body, "断网自动登录", "检测到未认证时自动提交账号密码")
+                 anchor="w").pack(fill="x", pady=(4, 2))
+        self.v_auto = self._make_switch(body, "断网自动登录", "")
 
         srow = tk.Frame(body, bg=SURFACE)
-        srow.pack(fill="x", pady=(10, 0))
+        srow.pack(fill="x", pady=(8, 0))
         tk.Label(srow, text="检测周期", bg=SURFACE, fg=T2_S, font=F_BODY,
                  width=8, anchor="w").pack(side="left")
         self.v_interval = Slider(srow, self._pending_interval, 5, 3600, 5,
@@ -1093,33 +1166,32 @@ class App(tk.Tk):
         tk.Label(srow, text="秒", bg=SURFACE, fg=T2_S, font=F_SMALL).pack(side="left", padx=(6, 0))
 
         rrow = tk.Frame(body, bg=SURFACE)
-        rrow.pack(fill="x", pady=(10, 0))
+        rrow.pack(fill="x", pady=(8, 0))
         self.v_timeout = self._field_inline(rrow, "请求超时（秒）", self.engine.cfg.get("timeout", 6))
         self.v_retry = self._field_inline(rrow, "失败重试", self.engine.cfg.get("retry", 3))
 
         self.v_base = self._field(body, "认证门户地址")
 
         tk.Label(body, text="系统", bg=SURFACE, fg=T3_S, font=F_SMALL_B,
-                 anchor="w").pack(fill="x", pady=(6, 3))
+                 anchor="w").pack(fill="x", pady=(4, 2))
         pair = tk.Frame(body, bg=SURFACE)
         pair.pack(fill="x")
         self.v_startup = self._make_switch(pair, "开机自启", "", side="left")
         self.v_autoclose = self._make_switch(pair, "关闭退出", "", side="left")
         self.v_round = self._make_switch(pair, "平滑外框", "", side="left")
 
-        bar = tk.Frame(outer, bg=SURFACE)
-        bar.pack(fill="x", padx=16, pady=(2, 2))
-        self.save_spinner = Spinner(bar, bg=SURFACE, size=18)
-        self.save_btn = Button(bar, "保存设置", self._save_settings, bg=SURFACE, fill=ACCENT,
-                               accent=True, width=140, height=36)
-        self.save_btn.pack(side="right")
+        # 悬浮保存按钮：固定右下角，滚动内容不会跑到它下面
+        self.save_btn = Button(view, "保存设置", self._save_settings, bg=SURFACE,
+                               fill=ACCENT, accent=True, width=132, height=38)
+        self.save_btn.place(relx=1.0, rely=1.0, x=-18, y=-8, anchor="se")
+        self.save_spinner = Spinner(view, bg=SURFACE, size=18)
 
-        return scroll
+        return view
 
     def _field(self, parent, label, *, secret=False):
         lbl = tk.Label(parent, text=label, bg=SURFACE, fg=T2_S, font=F_SMALL, anchor="w")
-        lbl.pack(fill="x", pady=(3, 2))
-        entry = RoundedEntry(parent, bg=SURFACE, fill=MID, height=32,
+        lbl.pack(fill="x", pady=(2, 1))
+        entry = RoundedEntry(parent, bg=SURFACE, fill=MID, height=30,
                              show="•" if secret else None)
         entry.pack(fill="x")
         entry._lbl = lbl
@@ -1171,11 +1243,57 @@ class App(tk.Tk):
                      anchor="w", justify="left").pack(side="left")
         return frame
 
+    def _mark_baseline(self):
+        self._baseline = self._snapshot()
+
+    # ------------------------------------------------------------ 未保存检查
+    def _snapshot(self):
+        try:
+            return (
+                self.v_user.get().strip(),
+                self.v_pass.get(),
+                self.v_remember.value,
+                self.v_auto.value,
+                int(self._pending_interval),
+                self.v_timeout.get().strip(),
+                self.v_retry.get().strip(),
+                self.v_base.get().strip(),
+                self.v_startup.value,
+                self.v_autoclose.value,
+                self.v_round.value,
+            )
+        except Exception:                               # noqa: BLE001
+            return None
+
+    def _is_dirty(self) -> bool:
+        if not hasattr(self, "v_user"):
+            return False
+        snap = self._snapshot()
+        return snap is not None and snap != self._baseline
+
+    def _confirm_leave_settings(self) -> bool:
+        """切走设置页且存在未保存改动时询问。"""
+        if not self._is_dirty():
+            return True
+        dlg = AskDialog(self, "有未保存的更改",
+                        "设置已经修改但还没保存，要现在保存吗？")
+        choice = dlg.ask()
+        if choice == "cancel":
+            return False
+        if choice == "save":
+            self._save_settings()
+        else:
+            self._sync_settings()
+        return True
+
     # ------------------------------------------------------------ 行为
     def _switch_manual(self, key):
         self._switch(key)
 
     def _switch(self, key):
+        if key != "settings" and getattr(self, "_current", None) == "settings":
+            if not self._confirm_leave_settings():
+                return
         self._current = key
         for name, frame in self._views.items():
             if name == key:
@@ -1255,7 +1373,7 @@ class App(tk.Tk):
 
         self._saving = True
         self.save_btn.set_enabled(False)
-        self.save_spinner.pack(side="right", padx=(0, 10))
+        self.save_spinner.place(relx=1.0, rely=1.0, x=-162, y=-35, anchor="se")
         self.save_spinner.start()
 
         self._save_patch, self._save_pw = patch, pw
@@ -1282,7 +1400,7 @@ class App(tk.Tk):
         self._saving = False
         try:
             self.save_spinner.stop()
-            self.save_spinner.pack_forget()
+            self.save_spinner.place_forget()
             self.save_btn.set_enabled(True)
         except Exception:                               # noqa: BLE001
             pass
@@ -1304,6 +1422,7 @@ class App(tk.Tk):
             self.v_pass._lbl.configure(text="密码   ·   尚未保存，填写后才能自动认证")
         self.v_user.set(cfg.get("user", ""))
         self.v_user.set_placeholder("请输入学号 / 工号")
+        self.after_idle(self._mark_baseline)
         self.v_base.set(cfg.get("base_url", ""))
         self.v_timeout.set(str(cfg.get("timeout", 6)))
         self.v_retry.set(str(cfg.get("retry", 3)))
