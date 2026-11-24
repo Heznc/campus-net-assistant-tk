@@ -32,9 +32,9 @@ ACCENT = "#0a84ff"
 DANGER = "#ff453a"
 WHITE = "#ffffff"
 
-RADIUS_WIN = 34
-RADIUS_CARD = 22
-RADIUS_CTRL = 18
+RADIUS_WIN = 44
+RADIUS_CARD = 28
+RADIUS_CTRL = 22
 
 
 def blend(bg: str, alpha: float) -> str:
@@ -479,7 +479,7 @@ class Slider(tk.Canvas):
 class NavItem(tk.Canvas):
     """圆角导航项：AA 圆角高亮，文字垂直居中。"""
 
-    def __init__(self, master, text, command, *, bg=DEEP, width=176, height=34):
+    def __init__(self, master, text, command, *, bg=DEEP, width=178, height=34):
         super().__init__(master, bg=bg, width=width, height=height,
                          highlightthickness=0, bd=0, takefocus=0)
         self._bg = bg
@@ -501,7 +501,7 @@ class NavItem(tk.Canvas):
         else:
             fill = None
         if fill:
-            draw_round(self, 0, 0, self._cw, self._ch, 16, fill)
+            draw_round(self, 0, 0, self._cw, self._ch, 20, fill)
         self.create_text(16, self._ch / 2, text=self._text, anchor="w",
                          font=F_BODY_B if self._active else F_BODY,
                          fill=T1_D if self._active else T2_D)
@@ -528,7 +528,7 @@ class IconButton(tk.Canvas):
     def _paint(self, hover=False):
         self.delete("all")
         if hover:
-            draw_round(self, 0, 0, self._cw, self._ch, 14,
+            draw_round(self, 0, 0, self._cw, self._ch, 16,
                        DANGER if self._danger else blend(DEEP, .12))
         self.create_text(self._cw / 2, self._ch / 2, text=self._glyph,
                          fill=WHITE if hover else T2_D, font=(FONT, 10, "bold"))
@@ -586,7 +586,8 @@ class App(tk.Tk):
         try:
             self.update_idletasks()
             hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
-            if os.environ.get("CNA_TK_ROUND", "").lower() == "dwm":
+            mode = os.environ.get("CNA_TK_ROUND") or self.engine.cfg.get("win_round", "big")
+            if mode == "dwm":
                 pref = ctypes.c_int(2)                  # DWMWCP_ROUND（小圆角但抗锯齿）
                 ctypes.windll.dwmapi.DwmSetWindowAttribute(
                     hwnd, 33, ctypes.byref(pref), ctypes.sizeof(pref))
@@ -757,7 +758,7 @@ class App(tk.Tk):
         body.pack(fill="both", expand=True)
 
         # 第一层：侧栏（与窗口底色同色，作为最底层）
-        side = tk.Frame(body, bg=DEEP, width=196)
+        side = tk.Frame(body, bg=DEEP, width=200)
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
         tk.Label(side, text="校园网助手", bg=DEEP, fg=T1_D, font=F_HEAD,
@@ -768,7 +769,7 @@ class App(tk.Tk):
         for key, label in (("overview", "总览"), ("settings", "设置"),
                            ("logs", "运行日志"), ("about", "关于")):
             item = NavItem(side, label, lambda k=key: self._switch_manual(k))
-            item.pack(padx=12, pady=1)
+            item.pack(padx=10, pady=1)
             self._navs[key] = item
 
         self.side_status = tk.Label(side, text="● 检测中", bg=DEEP, fg=T3_D,
@@ -1033,6 +1034,7 @@ class App(tk.Tk):
         pair.pack(fill="x")
         self.v_startup = self._make_switch(pair, "开机自启", "", side="left")
         self.v_autoclose = self._make_switch(pair, "关闭退出", "", side="left")
+        self.v_round = self._make_switch(pair, "平滑外框", "", side="left")
 
         bar = tk.Frame(outer, bg=SURFACE)
         bar.pack(fill="x", padx=16, pady=(2, 2))
@@ -1162,6 +1164,7 @@ class App(tk.Tk):
             "remember": self.v_remember.value,
             "autostart": self.v_startup.value,
             "auto_close": self.v_autoclose.value,
+            "win_round": "dwm" if self.v_round.value else "big",
             "interval": self._pending_interval,
             "base_url": self.v_base.get().strip(),
         }
@@ -1174,6 +1177,7 @@ class App(tk.Tk):
         if pw:
             patch["password"] = pw
         self.engine.update_config(patch)
+        self._apply_rounding()
         self.v_pass.clear()
         if patch["user"] and (pw or self._has_credentials()):
             self._first_run = False
@@ -1189,6 +1193,8 @@ class App(tk.Tk):
         self._pending_interval = int(cfg.get("interval", 20))
         self.v_interval.set_value(self._pending_interval)
         self.v_interval_entry.set(str(self._pending_interval))
+        self.v_round._on = str(cfg.get("win_round", "big")) == "dwm"
+        self.v_round._paint()
         for widget, value in ((self.v_remember, cfg.get("remember", True)),
                               (self.v_auto, cfg.get("auto_login", True)),
                               (self.v_startup, store.get_autostart()),
