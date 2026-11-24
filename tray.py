@@ -28,27 +28,6 @@ WM_RBUTTONUP = 0x0205
 WM_TRAY = 0x0400 + 20          # WM_USER + 20
 
 NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
-NIF_GUID = 0x20
-
-
-class GUID(ctypes.Structure):
-    _fields_ = [("Data1", w.DWORD), ("Data2", w.WORD), ("Data3", w.WORD),
-                ("Data4", ctypes.c_ubyte * 8)]
-
-
-def _make_guid(text: str) -> GUID:
-    import uuid
-    u = uuid.UUID(text)
-    g = GUID()
-    g.Data1 = u.time_low
-    g.Data2 = u.time_mid
-    g.Data3 = u.time_hi_version
-    for i, b in enumerate(u.bytes[8:]):
-        g.Data4[i] = b
-    return g
-
-
-TRAY_GUID = _make_guid("6f1a2d4c-8b3e-4f57-9a10-2c5be7d4a911")
 NIF_MESSAGE, NIF_ICON, NIF_TIP, NIF_INFO = 0x1, 0x2, 0x4, 0x10
 
 MF_STRING, MF_SEPARATOR, MF_CHECKED, MF_GRAYED, MF_DEFAULT = 0x0, 0x800, 0x8, 0x1, 0x1000
@@ -80,14 +59,12 @@ class WNDCLASSEXW(ctypes.Structure):
 
 
 class NOTIFYICONDATAW(ctypes.Structure):
-    """对齐 64 位 Vista+ 布局（含 guidItem / hBalloonIcon），cbSize 必须精确。"""
     _fields_ = [
         ("cbSize", w.DWORD), ("hWnd", w.HWND), ("uID", w.UINT),
         ("uFlags", w.UINT), ("uCallbackMessage", w.UINT), ("hIcon", w.HICON),
         ("szTip", w.WCHAR * 128), ("dwState", w.DWORD), ("dwStateMask", w.DWORD),
         ("szInfo", w.WCHAR * 256), ("uVersion", w.UINT),
         ("szInfoTitle", w.WCHAR * 64), ("dwInfoFlags", w.DWORD),
-        ("guidItem", ctypes.c_byte * 16), ("hBalloonIcon", w.HICON),
     ]
 
 
@@ -151,63 +128,31 @@ class Tray:
         nid.uID = 1
         return nid
 
-    def _make_window(self, style: int, size: int) -> int:
-        """用指定样式重建托盘窗口，返回句柄。"""
-        if self.hwnd:
-            try:
-                user32.DestroyWindow(self.hwnd)
-            except Exception:                           # noqa: BLE001
-                pass
-            self.hwnd = 0
-        hinst = kernel32.GetModuleHandleW(None)
-        self.hwnd = user32.CreateWindowExW(
-            0, "CampusNetAssistantTray", "校园网助手",
-            style, 0, 0, size, size, None, None, hinst, None)
-        return self.hwnd or 0
-
-    def _try_add(self, key: str, tip: str) -> bool:
-        nid = self._nid()
-        nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
-        nid.uCallbackMessage = WM_TRAY
-        nid.hIcon = self._icon_for(key)
-        nid.szTip = tip[:120]
-        ctypes.set_last_error(0)
-        ok = bool(shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid)))
-        return ok
-
     def _add(self) -> None:
-        """注册托盘图标：窗口样式/大小换几种组合重试。"""
+        """注册托盘图标；explorer 启动时偶发失败，所以重试几次。"""
         key, tip, _ = self.state_fn()
-        WS_OVERLAPPED = 0
-        WS_POPUP = 0x80000000
-        variants = [(WS_POPUP, 1), (WS_OVERLAPPED, 1), (WS_POPUP, 16)]
-        last_err = 0
-        for rnd in range(2):
-            for style, size in variants:
-                hwnd = self._make_window(style, size)
-                if not hwnd:
-                    last_err = ctypes.get_last_error()
-                    self.log(f"托盘窗口创建失败 style=0x{style:x} err={last_err}", "warn")
-                    continue
-                if self._try_add(key, tip):
-                    self.ok = True
-                    if self._on_ready:
-                        try:
-                            self._on_ready()
-                        except Exception:               # noqa: BLE001
-                            pass
-                    self._current_key = key
-                    self.log(f"托盘图标已就绪（右键可操作，style=0x{style:x} {size}px）", "info")
-                    self._promote()
-                    self._balloon("校园网助手已启动", "右键图标可快速检测 / 登录 / 退出")
-                    return
-                last_err = ctypes.get_last_error()
-                self.log(f"托盘注册失败 style=0x{style:x} {size}px hwnd={hwnd} err={last_err}",
-                         "warn")
-                time.sleep(0.4)
-            time.sleep(0.6)
+        for attempt in range(6):
+            nid = self._nid()
+            nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
+            nid.uCallbackMessage = WM_TRAY
+            nid.hIcon = self._icon_for(key)
+            nid.szTip = tip[:120]
+            if shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid)):
+                self.ok = True
+                if self._on_ready:
+                    try:
+                        self._on_ready()
+                    except Exception:                   # noqa: BLE001
+                        pass
+                self._current_key = key
+                self.log("托盘图标已就绪（右键可操作）", "info")
+                self._promote()
+                self._balloon("校园网助手已启动", "右键图标可快速检测 / 登录 / 退出")
+                return
+            time.sleep(1.0)
+        err = ctypes.get_last_error()
         icon = self._icon_for(key)
-        self.log(f"托盘图标创建失败：Shell_NotifyIcon 返回 0，err={last_err}，hIcon={icon}", "warn")
+        self.log(f"托盘图标创建失败：Shell_NotifyIcon 返回 0，err={err}，hIcon={icon}", "warn")
 
     def _promote(self) -> None:
         """Windows 11 默认把新图标收进“^”里，这里尽量把它设为常驻显示。"""

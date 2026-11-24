@@ -1223,8 +1223,13 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------ 窗口行为
     def hide_to_tray(self):
-        """点 × 最小化（托盘图标在部分环境不显示，隐藏窗口会找不回来）。"""
-        self._minimize()
+        """点 × 收进托盘；托盘不可用时退回最小化。"""
+        if self._tray is None or not getattr(self._tray, "ok", False):
+            self._minimize()
+            return
+        self.withdraw()
+        self._icon_shown = False
+        self._notify("已收进托盘", "右键托盘图标可退出")
 
     def _await_tray(self, waited_ms: int):
         """等托盘结果（最多 3 秒）：成功就显示窗口，失败就静默交接，全程不闪窗。"""
