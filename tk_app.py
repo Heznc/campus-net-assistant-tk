@@ -37,7 +37,7 @@ WHITE = "#ffffff"
 DARK = True               # 当前是否深色主题
 INK = "#ffffff"           # 文字/叠加色：深色主题叠白，浅色主题叠黑
 
-RADIUS_WIN = 34
+RADIUS_WIN = 44
 RADIUS_CARD = 28
 RADIUS_CTRL = 22
 
@@ -149,14 +149,16 @@ def squircle_points(x0: float, y0: float, w: float, h: float, r: float,
     return pts
 
 
-def _squircle_photo(w: int, h: int, r: int, fill: str, bg: str | None = None, ss: int = 4):
+def _squircle_photo(w: int, h: int, r: int, fill: str, bg: str | None = None,
+                    ss: int = 4, n: float | None = None):
     """圆角矩形图：直接压到底色上输出不透明图，避免透明像素在浅色主题下边黑。"""
-    key = ("sq", w, h, r, fill, bg)
+    key = ("sq", w, h, r, fill, bg, n)
     if key in _IMG_CACHE:
         return _IMG_CACHE[key]
     img = Image.new("RGB", (w * ss, h * ss), bg or fill)
     d = ImageDraw.Draw(img)
-    poly = squircle_points(0, 0, w * ss - 1, h * ss - 1, r * ss)
+    poly = squircle_points(0, 0, w * ss - 1, h * ss - 1, r * ss,
+                           n=n if n is not None else SQUIRCLE_N)
     d.polygon(poly, fill=fill)
     img = img.resize((w, h), Image.LANCZOS)
     photo = ImageTk.PhotoImage(img)
@@ -212,7 +214,8 @@ def _corner_mask(size: int, r: int, outer: str, inner: str, corner: str):
 
 
 def draw_round(canvas: tk.Canvas, x: int, y: int, w: int, h: int, r: int,
-               fill: str, tag: str = "shape", bg: str | None = None) -> None:
+               fill: str, tag: str = "shape", bg: str | None = None,
+               capsule: bool = False) -> None:
     """在 canvas 上画一块抗锯齿的**超椭圆**圆角。没有 PIL 时退化为多边形。"""
     r = max(0, min(r, min(w, h) // 2))
     if HAS_PIL and w > 1 and h > 1:
@@ -221,8 +224,8 @@ def draw_round(canvas: tk.Canvas, x: int, y: int, w: int, h: int, r: int,
                 bg = canvas.cget("bg")
             except Exception:                       # noqa: BLE001
                 bg = None
-        canvas.create_image(x, y, image=_squircle_photo(w, h, r, fill, bg), anchor="nw",
-                            tags=tag)
+        canvas.create_image(x, y, image=_squircle_photo(
+            w, h, r, fill, bg, n=2.0 if capsule else None), anchor="nw", tags=tag)
     else:
         pts = squircle_points(x, y, w - 1, h - 1, r, steps=8)
         canvas.create_polygon([c for p in pts for c in p], smooth=False,
@@ -391,7 +394,7 @@ class Button(tk.Canvas):
     def _paint(self, color):
         self.delete("all")
         w, h = self._size()
-        draw_round(self, 0, 0, w, h, self._radius, color)
+        draw_round(self, 0, 0, w, h, self._radius, color, capsule=True)
         self.create_text(w / 2, h / 2, text=self._text, fill=self._fg,
                          font=self._font, anchor="center")
 
@@ -527,7 +530,7 @@ class Toggle(tk.Canvas):
     def _paint(self, hovering=False):
         self.delete("all")
         track = ACCENT_TRACK if self._on else blend(SURFACE, .20 if hovering else .14)
-        draw_round(self, 0, 0, self._cw, self._ch, self._ch // 2, track)
+        draw_round(self, 0, 0, self._cw, self._ch, self._ch // 2, track, capsule=True)
         knob = self._ch - 8
         x = self._cw - knob - 4 if self._on else 4
         y = 4
@@ -584,10 +587,10 @@ class Slider(tk.Canvas):
     def _paint(self):
         self.delete("all")
         y = 12
-        draw_round(self, 6, y - 3, self._cw - 12, 6, 3, blend(SURFACE, .12))
+        draw_round(self, 6, y - 3, self._cw - 12, 6, 3, blend(SURFACE, .12), capsule=True)
         x = int(self._ratio_of(self._value) * (self._cw - 24)) + 12
         if x > 8:
-            draw_round(self, 6, y - 3, x - 6, 6, 3, ACCENT_TRACK)
+            draw_round(self, 6, y - 3, x - 6, 6, 3, ACCENT_TRACK, capsule=True)
         r = 7
         under = ACCENT_TRACK if x > 6 else blend(SURFACE, .12)
         if HAS_PIL:
@@ -768,7 +771,7 @@ class IconButton(tk.Canvas):
         self.delete("all")
         if hover:
             draw_round(self, 0, 0, self._cw, self._ch, 16,
-                       DANGER if self._danger else blend(DEEP, .12))
+                       DANGER if self._danger else blend(DEEP, .12), capsule=True)
         self.create_text(self._cw / 2, self._ch / 2, text=self._glyph,
                          fill=WHITE if hover else T2_D, font=(FONT, 10, "bold"))
 
@@ -915,7 +918,7 @@ class App(tk.Tk):
         try:
             hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
             w, h = max(200, self.winfo_width()), max(200, self.winfo_height())
-            pts = squircle_points(0, 0, w, h, RADIUS_WIN, n=2.0, steps=90)
+            pts = squircle_points(0, 0, w, h, RADIUS_WIN, steps=80)
             flat = [int(v) for pt in pts for v in pt]
             arr = (ctypes.c_long * len(flat))(*flat)
             rgn = ctypes.windll.gdi32.CreatePolygonRgn(arr, len(pts), 2)
