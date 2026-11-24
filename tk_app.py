@@ -34,19 +34,43 @@ ACCENT_TRACK = "#93a0b3"  # 开关/滑杆/光环用的深一档灰蓝
 DANGER = "#ff453a"
 WHITE = "#ffffff"
 
+DARK = True               # 当前是否深色主题
+INK = "#ffffff"           # 文字/叠加色：深色主题叠白，浅色主题叠黑
+
 RADIUS_WIN = 44
 RADIUS_CARD = 28
 RADIUS_CTRL = 22
 
 
 def blend(bg: str, alpha: float) -> str:
+    """把 bg 朝 INK 混合：深色主题提亮，浅色主题压暗。"""
     bg = bg.lstrip("#")
+    ink_ = INK.lstrip("#")
+    ir, ig, ib = (int(ink_[i:i + 2], 16) for i in (0, 2, 4))
     r, g, b = (int(bg[i:i + 2], 16) for i in (0, 2, 4))
     return "#%02x%02x%02x" % (
-        round(r + (255 - r) * alpha),
-        round(g + (255 - g) * alpha),
-        round(b + (255 - b) * alpha),
+        round(r + (ir - r) * alpha),
+        round(g + (ig - g) * alpha),
+        round(b + (ib - b) * alpha),
     )
+
+
+def set_palette(dark: bool) -> None:
+    """切换深浅色：重新计算三级灰、文字色、强调色。"""
+    global DARK, INK, BASE, DEEP, MID, SURFACE
+    global ACCENT, ACCENT_FG, ACCENT_TRACK
+    global T1, T2, T3, T1_D, T2_D, T3_D, T1_S, T2_S, T3_S
+    DARK = dark
+    INK = "#ffffff" if dark else "#000000"
+    if dark:
+        BASE, DEEP, MID, SURFACE = "#141416", "#1c1c1e", "#2c2c2e", "#3a3a3c"
+        ACCENT, ACCENT_FG, ACCENT_TRACK = "#aeb9c9", "#15171b", "#93a0b3"
+    else:
+        BASE, DEEP, MID, SURFACE = "#e3e4e8", "#ebecef", "#f4f5f7", "#ffffff"
+        ACCENT, ACCENT_FG, ACCENT_TRACK = "#8b9cb6", "#0f1115", "#7789a5"
+    T1, T2, T3 = blend(MID, .95), blend(MID, .70), blend(MID, .40)
+    T1_D, T2_D, T3_D = blend(DEEP, .95), blend(DEEP, .70), blend(DEEP, .40)
+    T1_S, T2_S, T3_S = blend(SURFACE, .95), blend(SURFACE, .70), blend(SURFACE, .40)
 
 
 # 文本三档（按各自底色混合）
@@ -260,10 +284,33 @@ class ScrollFrame(tk.Frame):
         return False
 
 
+def _system_dark() -> bool:
+    """读 Windows 的「应用模式」；读不到就按深色处理。"""
+    try:
+        import winreg
+        with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as key:
+            light, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+        return not bool(light)
+    except Exception:                                   # noqa: BLE001
+        return True
+
+
+def resolve_theme(mode: str) -> bool:
+    if mode == "light":
+        return False
+    if mode == "dark":
+        return True
+    return _system_dark()
+
+
 class Card(tk.Frame):
     """圆角卡片：Canvas 画 AA 圆角底，内层 Frame 铺满，四角再用遮罩补成圆角。"""
 
-    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=RADIUS_CARD, padding=6):
+    def __init__(self, master, *, bg=None, fill=None, radius=RADIUS_CARD, padding=6):
+        bg = bg or SURFACE
+        fill = fill or MID
         super().__init__(master, bg=bg)
         self._bg = bg
         self._radius = radius
@@ -294,9 +341,11 @@ class Card(tk.Frame):
 class Button(tk.Canvas):
     """圆角按钮：AA 圆角 + 文字严格居中。"""
 
-    def __init__(self, master, text, command=None, *, bg=MID, fill=SURFACE,
+    def __init__(self, master, text, command=None, *, bg=None, fill=None,
                  fg=None, width=120, height=34, radius=RADIUS_CTRL,
                  font=F_BTN, accent=False):
+        bg = bg or MID
+        fill = fill or SURFACE
         super().__init__(master, width=width, height=height, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
         self._bg, self._fill = bg, fill
@@ -354,8 +403,10 @@ class Button(tk.Canvas):
 class RoundedEntry(tk.Canvas):
     """AA 圆角输入框：Canvas 圆角底 + 同色 Entry 内嵌 + 占位提示（幽灵文字）。"""
 
-    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=RADIUS_CTRL,
+    def __init__(self, master, *, bg=None, fill=None, radius=RADIUS_CTRL,
                  height=36, show=None, fg=None, justify="left"):
+        bg = bg or SURFACE
+        fill = fill or MID
         super().__init__(master, bg=bg, height=height, highlightthickness=0, bd=0, takefocus=0)
         self._fill = fill
         self._radius = radius
@@ -419,7 +470,9 @@ class RoundedEntry(tk.Canvas):
 class RoundedText(tk.Canvas):
     """AA 圆角日志区：Canvas 圆角底 + 内嵌 Text。"""
 
-    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=RADIUS_CARD, height=200):
+    def __init__(self, master, *, bg=None, fill=None, radius=RADIUS_CARD, height=200):
+        bg = bg or SURFACE
+        fill = fill or MID
         super().__init__(master, bg=bg, height=height, highlightthickness=0, bd=0)
         self._fill = fill
         self._radius = radius
@@ -440,7 +493,8 @@ class RoundedText(tk.Canvas):
 class Toggle(tk.Canvas):
     """开关：胶囊形轨道 + 圆形滑块（AA）。"""
 
-    def __init__(self, master, value: bool, command=None, *, bg=MID, width=46, height=26):
+    def __init__(self, master, value: bool, command=None, *, bg=None, width=46, height=26):
+        bg = bg or MID
         super().__init__(master, width=width, height=height, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
         self._on = value
@@ -454,7 +508,7 @@ class Toggle(tk.Canvas):
 
     def _paint(self, hovering=False):
         self.delete("all")
-        track = ACCENT_TRACK if self._on else (blend(SURFACE, .08) if hovering else SURFACE)
+        track = ACCENT_TRACK if self._on else blend(SURFACE, .20 if hovering else .14)
         draw_round(self, 0, 0, self._cw, self._ch, self._ch // 2, track)
         knob = self._ch - 8
         x = self._cw - knob - 4 if self._on else 4
@@ -476,7 +530,8 @@ class Slider(tk.Canvas):
     """横向滑杆：AA 轨道 + 圆形滑块。"""
 
     def __init__(self, master, value, minimum=5, maximum=3600, step=5,
-                 command=None, bg=MID, width=200):
+                 command=None, bg=None, width=200):
+        bg = bg or MID
         super().__init__(master, width=width, height=24, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
         self._min, self._max, self._step = minimum, maximum, step
@@ -536,7 +591,8 @@ class Slider(tk.Canvas):
 class NavItem(tk.Canvas):
     """圆角导航项：AA 圆角高亮，文字垂直居中。"""
 
-    def __init__(self, master, text, command, *, bg=DEEP, width=178, height=34):
+    def __init__(self, master, text, command, *, bg=None, width=178, height=34):
+        bg = bg or DEEP
         super().__init__(master, bg=bg, width=width, height=height,
                          highlightthickness=0, bd=0, takefocus=0)
         self._bg = bg
@@ -571,7 +627,9 @@ class NavItem(tk.Canvas):
 class Spinner(tk.Canvas):
     """保存中的转圈指示器。"""
 
-    def __init__(self, master, *, bg=SURFACE, size=18, color=ACCENT_TRACK):
+    def __init__(self, master, *, bg=None, size=18, color=None):
+        bg = bg or SURFACE
+        color = color or ACCENT_TRACK
         super().__init__(master, width=size, height=size, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
         self._size = size
@@ -607,7 +665,8 @@ class StatusRing(tk.Canvas):
         "idle": "#8e8e93",      # 空闲
     }
 
-    def __init__(self, master, *, bg=MID, size=44):
+    def __init__(self, master, *, bg=None, size=44):
+        bg = bg or MID
         super().__init__(master, width=size, height=size, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
         self._size = size
@@ -657,7 +716,8 @@ class StatusRing(tk.Canvas):
 class IconButton(tk.Canvas):
     """标题栏小按钮：AA 圆角，字符居中。"""
 
-    def __init__(self, master, glyph, command, *, bg=DEEP, width=32, height=24, danger=False):
+    def __init__(self, master, glyph, command, *, bg=None, width=32, height=24, danger=False):
+        bg = bg or DEEP
         super().__init__(master, width=width, height=height, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
         self._bg, self._glyph, self._command = bg, glyph, command
@@ -770,6 +830,8 @@ class App(tk.Tk):
         self._sig = None
         self._last_seq = 0
         self._tray = None
+        self.theme_mode = str(engine.cfg.get("theme", "system"))
+        set_palette(resolve_theme(self.theme_mode))
         self._pending_interval = int(engine.cfg.get("interval", 20))
         self._first_run = not self._has_credentials()
         self._grips: dict[str, tk.Frame] = {}
@@ -829,6 +891,25 @@ class App(tk.Tk):
         if self._round_job:
             self.after_cancel(self._round_job)
         self._round_job = self.after(120, self._apply_rounding)
+
+    def _rebuild_ui(self):
+        """换主题时整棵控件树重建（颜色都在创建时确定）。"""
+        cur = self._current
+        for child in list(self.winfo_children()):
+            child.destroy()
+        self._views.clear()
+        self._navs.clear()
+        self._scrolls = []
+        self._build()
+        self._install_grips()
+        self._switch(cur)
+        self._apply_rounding()
+
+    def _set_theme(self, mode: str):
+        self.theme_mode = mode
+        self.engine.update_config({"theme": mode})
+        set_palette(resolve_theme(mode))
+        self._rebuild_ui()
 
     # ------------------------------------------------------------ 拖动改尺寸
     def _install_grips(self):
@@ -1232,7 +1313,7 @@ class App(tk.Tk):
         self.v_auto = self._make_switch(body, "断网自动登录", "")
 
         srow = tk.Frame(body, bg=SURFACE)
-        srow.pack(fill="x", pady=(8, 0))
+        srow.pack(fill="x", pady=(6, 0))
         tk.Label(srow, text="检测周期", bg=SURFACE, fg=T2_S, font=F_BODY,
                  width=8, anchor="w").pack(side="left")
         self.v_interval = Slider(srow, self._pending_interval, 5, 3600, 5,
@@ -1248,14 +1329,28 @@ class App(tk.Tk):
         tk.Label(srow, text="秒", bg=SURFACE, fg=T2_S, font=F_SMALL).pack(side="left", padx=(6, 0))
 
         rrow = tk.Frame(body, bg=SURFACE)
-        rrow.pack(fill="x", pady=(8, 0))
+        rrow.pack(fill="x", pady=(6, 0))
         self.v_timeout = self._field_inline(rrow, "请求超时（秒）", self.engine.cfg.get("timeout", 6))
         self.v_retry = self._field_inline(rrow, "失败重试", self.engine.cfg.get("retry", 3))
 
         self.v_base = self._field(body, "认证门户地址")
 
+        trow = tk.Frame(body, bg=SURFACE)
+        trow.pack(fill="x", pady=(6, 0))
+        tk.Label(trow, text="主题", bg=SURFACE, fg=T2_S, font=F_BODY, width=8,
+                 anchor="w").pack(side="left")
+        self._theme_btns = {}
+        for mode, label in (("system", "跟随系统"), ("light", "明亮"), ("dark", "黑夜")):
+            btn = Button(trow, label, lambda m=mode: self._set_theme(m), bg=SURFACE,
+                         fill=ACCENT_TRACK if self.theme_mode == mode else MID,
+                         width=74, height=26, font=F_SMALL,
+                         fg=ACCENT_FG if self.theme_mode == mode else None,
+                         accent=(self.theme_mode == mode))
+            btn.pack(side="left", padx=(0, 6))
+            self._theme_btns[mode] = btn
+
         tk.Label(body, text="系统", bg=SURFACE, fg=T3_S, font=F_SMALL_B,
-                 anchor="w").pack(fill="x", pady=(4, 2))
+                 anchor="w").pack(fill="x", pady=(6, 2))
         pair = tk.Frame(body, bg=SURFACE)
         pair.pack(fill="x")
         self.v_startup = self._make_switch(pair, "开机自启", "", side="left")
@@ -1272,8 +1367,8 @@ class App(tk.Tk):
 
     def _field(self, parent, label, *, secret=False):
         lbl = tk.Label(parent, text=label, bg=SURFACE, fg=T2_S, font=F_SMALL, anchor="w")
-        lbl.pack(fill="x", pady=(2, 1))
-        entry = RoundedEntry(parent, bg=SURFACE, fill=MID, height=30,
+        lbl.pack(fill="x", pady=(1, 1))
+        entry = RoundedEntry(parent, bg=SURFACE, fill=MID, height=28,
                              show="•" if secret else None)
         entry.pack(fill="x")
         entry._lbl = lbl
@@ -1294,7 +1389,7 @@ class App(tk.Tk):
         if side:
             row.pack(side=side, fill="x", expand=True, pady=3, padx=(0, 8))
         else:
-            row.pack(fill="x", pady=1)
+            row.pack(fill="x", pady=0)
         txt = tk.Frame(row, bg=SURFACE)
         txt.pack(side="left", fill="x", expand=True)
         tk.Label(txt, text=label, bg=SURFACE, fg=T1_S, font=F_BODY, anchor="w").pack(fill="x")
@@ -1532,6 +1627,10 @@ class App(tk.Tk):
 
     def _tick(self):
         try:
+            if self.theme_mode == "system" and resolve_theme("system") != DARK:
+                set_palette(not DARK)
+                self._rebuild_ui()
+                return self.after(1000, self._tick)
             self._refresh()
         except Exception:                               # noqa: BLE001
             pass

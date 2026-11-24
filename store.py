@@ -52,6 +52,7 @@ DEFAULTS = {
     "autostart": False,             # 开机自动运行
     "auto_close": False,            # 关闭窗口时退出程序
     "win_round": "big",             # 外框圆角：big=大圆角 / dwm=系统抗锯齿
+    "theme": "system",              # 主题：light / dark / system
 }
 
 _lock = threading.RLock()

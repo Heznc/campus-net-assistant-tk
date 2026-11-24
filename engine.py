@@ -213,6 +213,9 @@ class Engine:
                         cfg[key] = max(lo, min(hi, int(patch[key])))
                     except (TypeError, ValueError):
                         pass
+            if "theme" in patch:
+                mode = str(patch["theme"]).lower()
+                cfg["theme"] = mode if mode in ("light", "dark", "system") else "system"
             if "win_round" in patch:
                 cfg["win_round"] = "dwm" if str(patch["win_round"]).lower() == "dwm" else "big"
             if "probe_urls" in patch:
