@@ -69,7 +69,7 @@ def set_palette(dark: bool) -> None:
         ACCENT, ACCENT_FG, ACCENT_TRACK = "#aeb9c9", "#15171b", "#93a0b3"
     else:
         BASE, DEEP, MID, SURFACE = "#e3e4e8", "#ebecef", "#f4f5f7", "#ffffff"
-        ACCENT, ACCENT_FG, ACCENT_TRACK = "#8b9cb6", "#0f1115", "#7789a5"
+        ACCENT, ACCENT_FG, ACCENT_TRACK = "#b3c2d4", "#141821", "#9aacc2"
     T1, T2, T3 = blend(MID, .95), blend(MID, .70), blend(MID, .40)
     T1_D, T2_D, T3_D = blend(DEEP, .95), blend(DEEP, .70), blend(DEEP, .40)
     T1_S, T2_S, T3_S = blend(SURFACE, .95), blend(SURFACE, .70), blend(SURFACE, .40)
