@@ -977,6 +977,7 @@ class App(tk.Tk):
         self._round_job = None
         self._saving = False
         self._baseline = None
+        self._tray_ok = False
         self._last_error_msg = ""
         self._min_size = (900, 560)
         self.minsize(*self._min_size)
@@ -1298,23 +1299,33 @@ class App(tk.Tk):
         try:
             self._tray = tray_mod.Tray(os.path.join(store.APP_DIR, "assets"), state_fn,
                                        open_win, do_check, do_login, toggle_auto, quit_app,
-                                       log=self.engine.log)
+                                       log=self.engine.log,
+                                       on_ready=lambda: setattr(self, "_tray_ok", True))
             self._tray.start()
         except Exception as exc:                        # noqa: BLE001
             self.engine.log(f"托盘初始化失败：{exc}", "warn")
 
-        # 托盘不可用时说明原因（高完整性进程无法往普通任务栏加图标）
-        def _check_tray():
-            if self._tray is not None and getattr(self._tray, "ok", False):
-                return
-            if getattr(sys, "frozen", False) and self._handoff_to_python():
-                return
-            if is_elevated():
-                self.engine.log("托盘图标需要普通权限：请从桌面/开始菜单启动，别用管理员终端启动", "warn")
-                self._toast("托盘图标未显示",
-                            "当前以管理员身份运行，任务栏不接受加图标。\n"
-                            "用桌面快捷方式或「启动.vbs」重新打开即可。")
-        self.after(1500, _check_tray)
+        # 托盘判定统一交给 _check_tray()（会多等几秒，等托盘线程重试完）
+        self.after(600, lambda: self._check_tray(0))
+
+
+    def _check_tray(self, waited_ms: int):
+        """托盘自检：给托盘线程最多 6 秒重试时间，仍失败才提示/交接。"""
+        if getattr(self, "_tray_ok", False) or (
+                self._tray is not None and getattr(self._tray, "ok", False)):
+            return
+        if waited_ms < 6000:
+            self.after(500, lambda: self._check_tray(waited_ms + 500))
+            return
+        if getattr(sys, "frozen", False) and self._handoff_to_python():
+            return
+        if is_elevated():
+            self.engine.log("托盘图标需要普通权限：请从桌面/开始菜单启动，别用管理员终端启动", "warn")
+            self._toast("托盘图标未显示",
+                        "当前以管理员身份运行，任务栏不接受加图标。\n"
+                        "用桌面快捷方式或「启动.vbs」重新打开即可。")
+        else:
+            self.engine.log("托盘图标未能注册（详见上方日志）", "warn")
 
     def _handoff_to_python(self) -> bool:
         """打包版加不了托盘图标时，改用 pythonw 跑随附的源码（托盘可用）。"""

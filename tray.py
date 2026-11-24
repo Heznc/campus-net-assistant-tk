@@ -90,7 +90,7 @@ class Tray:
     """托盘图标。所有回调都在托盘线程里触发，回调本身应快速返回。"""
 
     def __init__(self, icon_dir: str, state_fn, on_open, on_check, on_login,
-                 on_toggle_auto, on_quit, log=None):
+                 on_toggle_auto, on_quit, log=None, on_ready=None):
         self.icon_dir = icon_dir
         self.state_fn = state_fn          # () -> (icon_key, tooltip, auto_login_bool)
         self.on_open = on_open
@@ -99,6 +99,7 @@ class Tray:
         self.on_toggle_auto = on_toggle_auto
         self.on_quit = on_quit
         self.log = log or (lambda *a, **k: None)
+        self._on_ready = on_ready
         self.hwnd = None
         self._icons: dict[str, int] = {}
         self._current_key = None
@@ -168,6 +169,11 @@ class Tray:
                     continue
                 if self._try_add(key, tip):
                     self.ok = True
+                    if self._on_ready:
+                        try:
+                            self._on_ready()
+                        except Exception:               # noqa: BLE001
+                            pass
                     self._current_key = key
                     self.log(f"托盘图标已就绪（右键可操作，style=0x{style:x} {size}px）", "info")
                     self._promote()
