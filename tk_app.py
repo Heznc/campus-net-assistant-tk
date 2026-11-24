@@ -164,6 +164,18 @@ def _squircle_photo(w: int, h: int, r: int, fill: str, bg: str | None = None, ss
     return photo
 
 
+def _circle_photo(d: int, fill: str, bg: str, ss: int = 4):
+    key = ("circle", d, fill, bg)
+    if key in _IMG_CACHE:
+        return _IMG_CACHE[key]
+    img = Image.new("RGB", (d * ss, d * ss), bg)
+    ImageDraw.Draw(img).ellipse((0, 0, d * ss - 1, d * ss - 1), fill=fill)
+    img = img.resize((d, d), Image.LANCZOS)
+    photo = ImageTk.PhotoImage(img)
+    _IMG_CACHE[key] = photo
+    return photo
+
+
 def _corner_mask(size: int, r: int, outer: str, inner: str, corner: str):
     """角落补丁：圆弧外侧填 outer、内侧填 inner，输出不透明图（抗锯齿）。"""
     key = ("mask", size, r, outer, inner, corner)
@@ -200,14 +212,15 @@ def _corner_mask(size: int, r: int, outer: str, inner: str, corner: str):
 
 
 def draw_round(canvas: tk.Canvas, x: int, y: int, w: int, h: int, r: int,
-               fill: str, tag: str = "shape") -> None:
+               fill: str, tag: str = "shape", bg: str | None = None) -> None:
     """在 canvas 上画一块抗锯齿的**超椭圆**圆角。没有 PIL 时退化为多边形。"""
     r = max(0, min(r, min(w, h) // 2))
     if HAS_PIL and w > 1 and h > 1:
-        try:
-            bg = canvas.cget("bg")
-        except Exception:                           # noqa: BLE001
-            bg = None
+        if bg is None:
+            try:
+                bg = canvas.cget("bg")
+            except Exception:                       # noqa: BLE001
+                bg = None
         canvas.create_image(x, y, image=_squircle_photo(w, h, r, fill, bg), anchor="nw",
                             tags=tag)
     else:
@@ -518,7 +531,10 @@ class Toggle(tk.Canvas):
         knob = self._ch - 8
         x = self._cw - knob - 4 if self._on else 4
         y = 4
-        draw_round(self, x, y, knob, knob, knob // 2, WHITE)
+        if HAS_PIL:
+            self.create_image(x, y, image=_circle_photo(knob, WHITE, track), anchor="nw")
+        else:
+            self.create_oval(x, y, x + knob, y + knob, fill=WHITE, outline="")
 
     def _toggle(self, _e=None):
         self._on = not self._on
@@ -573,7 +589,12 @@ class Slider(tk.Canvas):
         if x > 8:
             draw_round(self, 6, y - 3, x - 6, 6, 3, ACCENT_TRACK)
         r = 7
-        draw_round(self, x - r, y - r, r * 2, r * 2, r, WHITE)
+        under = ACCENT_TRACK if x > 6 else blend(SURFACE, .12)
+        if HAS_PIL:
+            self.create_image(x - r, y - r, image=_circle_photo(r * 2, WHITE, under),
+                              anchor="nw")
+        else:
+            self.create_oval(x - r, y - r, x + r, y + r, fill=WHITE, outline="")
 
     def _drag(self, event):
         ratio = (event.x - 12) / max(1, self._cw - 24)
