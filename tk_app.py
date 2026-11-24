@@ -1268,6 +1268,7 @@ class App(tk.Tk):
         meta.pack(fill="x", padx=16, pady=(8, 0))
         self.st_ip = self._meta_row(meta, "终端 IP")
         self.st_up = self._meta_row(meta, "本次在线")
+        self.st_next = self._meta_row(meta, "下次检测")
         self.st_last = self._meta_row(meta, "上次登录")
         self.st_count = self._meta_row(meta, "登录次数")
 
@@ -1829,6 +1830,7 @@ class App(tk.Tk):
         if sig == self._sig:
             up = self._fmt_dur(st["online_seconds"]) if st["authenticated"] else "—"
             self.st_up.configure(text=up)
+            self.st_next.configure(text=self._fmt_next(st.get("next_in")))
             if self._current == "overview":
                 self._ov_uptime.configure(text=up)
             return
@@ -1857,6 +1859,7 @@ class App(tk.Tk):
         self.st_count.configure(text=str(st["login_count"]))
         up = self._fmt_dur(st["online_seconds"]) if st["authenticated"] else "—"
         self.st_up.configure(text=up)
+        self.st_next.configure(text=self._fmt_next(st.get("next_in")))
         if self._current == "overview":
             self._ov_uptime.configure(text=up)
             self._ov_auth.configure(text="已认证" if st["authenticated"] else "未认证")
@@ -1887,6 +1890,17 @@ class App(tk.Tk):
             widget.insert("end", e["msg"] + "\n", tag)
         widget.see("end")
         widget.configure(state="disabled")
+
+    @staticmethod
+    def _fmt_next(sec):
+        if sec is None or sec < 0:
+            return "已暂停"
+        if sec <= 0:
+            return "检测中…"
+        if sec < 60:
+            return f"{sec} 秒后"
+        m, s2 = divmod(int(sec), 60)
+        return f"{m} 分 {s2} 秒后"
 
     @staticmethod
     def _fmt_dur(sec):

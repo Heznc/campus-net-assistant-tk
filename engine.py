@@ -24,6 +24,7 @@ class Engine:
         self._seq = 0
         self._fail_count = 0
         self._next_attempt = 0.0
+        self._next_check = 0.0
         self._portal: Portal | None = None
         self._warned_no_pw = False
         self.state = {
@@ -85,6 +86,12 @@ class Engine:
             st = dict(self.state)
             st["online_seconds"] = (int(time.time() - self.state["online_since"])
                                     if self.state.get("online_since") else 0)
+            if self.state.get("busy"):
+                st["next_in"] = 0
+            elif self._next_check:
+                st["next_in"] = max(0, int(round(self._next_check - time.time())))
+            else:
+                st["next_in"] = -1
             return st
 
     # ------------------------------------------------------------- 检测
@@ -107,6 +114,7 @@ class Engine:
             except PortalError as exc:
                 msg = str(exc)
 
+            self._next_check = time.time() + int(self.cfg.get("interval") or 20)
             self._patch(
                 internet=bool(net["online"]), portal_reachable=reachable,
                 authenticated=authenticated, ip=ip, acct=acct,
@@ -265,6 +273,7 @@ class Engine:
             except Exception as exc:                    # noqa: BLE001
                 self.log(f"守护线程异常：{exc}", "error")
                 time.sleep(5)
+            self._next_check = time.time() + interval
             slept = 0.0
             while slept < interval and not self.stop_event.is_set():
                 time.sleep(0.25)
