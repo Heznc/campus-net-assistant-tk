@@ -998,6 +998,46 @@ class App(tk.Tk):
     def _center(self, w, h):
         return max(0, (self.winfo_screenwidth() - w) // 2), max(0, (self.winfo_screenheight() - h) // 2 - 20)
 
+    def _taskbar_style(self):
+        """无边框窗口默认带 WS_EX_TOOLWINDOW（不进任务栏），改成 APPWINDOW。"""
+        try:
+            from ctypes import wintypes as wt
+            u = ctypes.windll.user32
+            GWL_EXSTYLE = -20
+            WS_EX_APPWINDOW = 0x00040000
+            WS_EX_TOOLWINDOW = 0x00000080
+            pid = ctypes.windll.kernel32.GetCurrentProcessId()
+
+            def fix(hwnd, _lparam):
+                owner = wt.DWORD()
+                u.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+                if owner.value != pid:
+                    return True
+                cls = ctypes.create_unicode_buffer(64)
+                u.GetClassNameW(hwnd, cls, 64)
+                if cls.value != "TkTopLevel":
+                    return True
+                style = u.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                new_style = (style | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
+                if new_style != style:
+                    u.SetWindowLongW(hwnd, GWL_EXSTYLE, new_style)
+                    u.ShowWindow(hwnd, 0)
+                    u.ShowWindow(hwnd, 5)
+                return True
+
+            proc = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)(fix)
+            u.EnumWindows(proc, 0)
+        except Exception:                               # noqa: BLE001
+            pass
+
+    def _set_window_icon(self):
+        try:
+            icon = os.path.join(store.APP_DIR, "assets", "app.ico")
+            if os.path.isfile(icon):
+                self.iconbitmap(default=icon)
+        except Exception:                               # noqa: BLE001
+            pass
+
     def _apply_rounding(self):
         """窗口外轮廓：优先用 DWM 圆角（合成器抗锯齿），失败再退回区域裁剪。"""
         try:
@@ -1112,12 +1152,17 @@ class App(tk.Tk):
             self._notify("校园网助手已启动", "在右下角托盘里，右键可操作")
             return
         self.deiconify()
+        self.overrideredirect(True)
+        self._set_window_icon()
+        self._taskbar_style()
         self.lift()
         w, h = self._init_size
         x, y = self._center(w, h)
         self.geometry("%dx%d+%d+%d" % (w, h, x, y))
         self.update_idletasks()
         self._apply_rounding()
+        self._taskbar_style()
+        self.after(400, self._taskbar_style)
         if self._first_run:
             self._switch("welcome")
             self.w_user.focus()
@@ -1136,6 +1181,9 @@ class App(tk.Tk):
 
     def show_window(self):
         self.deiconify()
+        if not self.overrideredirect():
+            self.overrideredirect(True)                 # 从最小化回来要重新去掉原生标题栏
+        self._taskbar_style()
         self.lift()
         try:
             self.focus_force()
@@ -1143,6 +1191,8 @@ class App(tk.Tk):
             pass
         self.update_idletasks()
         self._apply_rounding()
+        self._taskbar_style()
+        self.after(200, self._taskbar_style)
 
     def quit_app(self):
         self.engine.shutdown()
@@ -1871,6 +1921,12 @@ class App(tk.Tk):
 
     def _tick(self):
         try:
+            # 从任务栏/最小化恢复时 Tk 会带回原生标题栏，这里再抹掉
+            if not self.overrideredirect() and self.state() == "normal":
+                self.overrideredirect(True)
+                self.update_idletasks()
+                self._apply_rounding()
+                self._taskbar_style()
             if self.theme_mode == "system" and resolve_theme("system") != DARK:
                 set_palette(not DARK)
                 self._rebuild_ui()
