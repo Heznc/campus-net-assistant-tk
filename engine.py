@@ -25,6 +25,7 @@ class Engine:
         self._fail_count = 0
         self._next_attempt = 0.0
         self._next_check = 0.0
+        self._busy_since = 0.0
         self._portal: Portal | None = None
         self._warned_no_pw = False
         self.state = {
@@ -82,6 +83,8 @@ class Engine:
                 self.state["online_since"] = time.time()
             if kw.get("authenticated") is False:
                 self.state["online_since"] = 0.0
+            if "busy" in kw:
+                self._busy_since = time.time() if kw["busy"] else 0.0
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -97,47 +100,67 @@ class Engine:
             return st
 
     # ------------------------------------------------------------- 检测
-    def check(self, quiet: bool = False) -> None:
+    def check(self, quiet: bool = False) -> threading.Thread | None:
+        """检测一次；任何异常都不会让界面卡在「检测中」。"""
         with self._op_lock:
             prev_auth = self.state["authenticated"]
             prev_check = self.state["last_check"]
             self._patch(phase="checking", busy=True)
-            cfg = self.cfg
-            net = probe_internet(cfg["probe_urls"], timeout=min(6.0, float(cfg["timeout"]) + 1))
-            reachable = authenticated = False
-            ip = acct = ""
-            msg = ""
             try:
-                status = self.portal().ip_status()
-                reachable = True
-                authenticated = bool(status.get("logined"))
-                ip = status.get("ip") or ""
-                acct = status.get("acct") or ""
-            except PortalError as exc:
-                msg = str(exc)
+                cfg = self.cfg
+                try:
+                    net = probe_internet(
+                        cfg["probe_urls"],
+                        timeout=min(6.0, float(cfg["timeout"]) + 1))
+                except Exception as exc:                # noqa: BLE001
+                    net = {"online": False, "detail": f"探测异常：{exc}"}
 
-            self._next_check = time.time() + int(self.cfg.get("interval") or 20)
-            self._patch(
-                internet=bool(net["online"]), portal_reachable=reachable,
-                authenticated=authenticated, ip=ip, acct=acct,
-                last_check=time.time(), busy=False,
-                phase="online" if authenticated else ("offline" if reachable else "error"),
-                message=msg if not reachable else ("已认证，可正常上网" if authenticated else "需要认证"),
-            )
-            if not quiet:
-                if authenticated:
-                    self.log(f"已在线：IP {ip or '未知'}"
-                             f"{'，账号 ' + acct if acct else ''}"
-                             f"{'，外网可达' if net['online'] else '，外网暂不可达'}", "ok")
-                elif reachable:
-                    self.log(f"未认证：门户可达（IP {ip or '未知'}），准备登录", "warn")
-                else:
-                    self.log(f"门户不可达：{msg or '网络未连接'}", "error")
-            elif prev_check:
-                if prev_auth and not authenticated:
-                    self.log("检测到认证已失效，准备自动重新登录", "warn")
-                elif not prev_auth and authenticated:
-                    self.log(f"网络已恢复在线（IP {ip or '未知'}）", "ok")
+                reachable = authenticated = False
+                ip = acct = ""
+                msg = ""
+                try:
+                    status = self.portal().ip_status()
+                    reachable = True
+                    authenticated = bool(status.get("logined"))
+                    ip = status.get("ip") or ""
+                    acct = status.get("acct") or ""
+                except PortalError as exc:
+                    msg = str(exc)
+
+                self._next_check = time.time() + int(self.cfg.get("interval") or 20)
+                self._patch(
+                    internet=bool(net.get("online")), portal_reachable=reachable,
+                    authenticated=authenticated, ip=ip, acct=acct,
+                    last_check=time.time(), busy=False,
+                    phase="online" if authenticated else ("offline" if reachable else "error"),
+                    message=msg if not reachable
+                    else ("已认证，可正常上网" if authenticated else "需要认证"),
+                )
+
+                if not quiet:
+                    if authenticated:
+                        extra = "，外网可达" if net.get("online") else "，外网暂不可达"
+                        self.log(f"已在线：IP {ip or '未知'}"
+                                 f"{'，账号 ' + acct if acct else ''}{extra}", "ok")
+                    elif reachable:
+                        self.log(f"未认证：门户可达（IP {ip or '未知'}），准备登录", "warn")
+                    else:
+                        self.log(f"门户不可达：{msg or '网络未连接'}", "error")
+                elif prev_check:
+                    if prev_auth and not authenticated:
+                        self.log("检测到认证已失效，准备自动重新登录", "warn")
+                    elif not prev_auth and authenticated:
+                        self.log(f"网络已恢复在线（IP {ip or '未知'}）", "ok")
+            finally:
+                # 兜底：不论上面发生什么，都必须退出「检测中」
+                if self.state.get("busy"):
+                    self._next_check = time.time() + int(self.cfg.get("interval") or 20)
+                    self._patch(
+                        busy=False, last_check=time.time(),
+                        phase="error" if not self.state.get("portal_reachable") else "offline",
+                        message=self.state.get("message") or "检测未完成",
+                    )
+                    self.log("检测异常或超时，已重置状态", "warn")
 
     # ------------------------------------------------------------- 登录
     def login(self, user: str | None = None, password: str | None = None) -> dict:
@@ -282,6 +305,11 @@ class Engine:
             while slept < interval and not self.stop_event.is_set():
                 time.sleep(0.25)
                 slept += 0.25
+                if self.state.get("busy") and self._busy_since:
+                    if time.time() - self._busy_since > 40:
+                        self.log("检测卡住超过 40 秒，强制复位", "warn")
+                        self._patch(busy=False, phase="error",
+                                    message="检测超时", last_check=time.time())
         self.log("后台守护已停止", "info")
 
     def shutdown(self) -> None:
