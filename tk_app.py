@@ -1031,7 +1031,7 @@ class App(tk.Tk):
             pass
 
     def _set_window_icon(self):
-        """同时用 WM_SETICON 和 Tk 的 iconbitmap，任务栏才拿得到图标。"""
+        """给窗口设置 app.ico（任务栏/Alt+Tab 都用它）。"""
         icon = os.path.join(store.APP_DIR, "assets", "app.ico")
         if not os.path.isfile(icon):
             return
@@ -1039,14 +1039,21 @@ class App(tk.Tk):
             self.iconbitmap(default=icon)
         except Exception:                               # noqa: BLE001
             pass
+
         try:
             from ctypes import wintypes as wt
             u = ctypes.windll.user32
-            WM_SETICON = 0x0080
+            WM_SETICON, IMAGE_ICON, LR_LOADFROMFILE = 0x0080, 1, 0x10
             ICON_SMALL, ICON_BIG = 0, 1
-            IMAGE_ICON, LR_LOADFROMFILE = 1, 0x10
-            big = u.LoadImageW(None, icon, IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
-            small = u.LoadImageW(None, icon, IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+
+            u.LoadImageW.restype = ctypes.c_void_p
+            u.LoadImageW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint,
+                                     ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+            h_big = u.LoadImageW(None, icon, IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
+            h_small = u.LoadImageW(None, icon, IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+            u.SendMessageW.restype = ctypes.c_void_p
+            u.SendMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+
             pid = ctypes.windll.kernel32.GetCurrentProcessId()
 
             def fix(hwnd, _lparam):
@@ -1058,16 +1065,17 @@ class App(tk.Tk):
                 u.GetClassNameW(hwnd, cls, 64)
                 if cls.value != "TkTopLevel":
                     return True
-                if big:
-                    u.SendMessageW(hwnd, WM_SETICON, ICON_BIG, big)
-                if small:
-                    u.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, small)
+                if h_big:
+                    u.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_big)
+                if h_small:
+                    u.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_small)
                 return True
 
             proc = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)(fix)
             u.EnumWindows(proc, 0)
-        except Exception:                               # noqa: BLE001
-            pass
+            self.engine.log("窗口图标已应用", "info")
+        except Exception as exc:                        # noqa: BLE001
+            self.engine.log(f"设置窗口图标失败：{exc!r}", "warn")
 
     def _apply_rounding(self):
         """窗口外轮廓：优先用 DWM 圆角（合成器抗锯齿），失败再退回区域裁剪。"""
