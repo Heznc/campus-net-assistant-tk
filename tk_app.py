@@ -1031,10 +1031,41 @@ class App(tk.Tk):
             pass
 
     def _set_window_icon(self):
+        """同时用 WM_SETICON 和 Tk 的 iconbitmap，任务栏才拿得到图标。"""
+        icon = os.path.join(store.APP_DIR, "assets", "app.ico")
+        if not os.path.isfile(icon):
+            return
         try:
-            icon = os.path.join(store.APP_DIR, "assets", "app.ico")
-            if os.path.isfile(icon):
-                self.iconbitmap(default=icon)
+            self.iconbitmap(default=icon)
+        except Exception:                               # noqa: BLE001
+            pass
+        try:
+            from ctypes import wintypes as wt
+            u = ctypes.windll.user32
+            WM_SETICON = 0x0080
+            ICON_SMALL, ICON_BIG = 0, 1
+            IMAGE_ICON, LR_LOADFROMFILE = 1, 0x10
+            big = u.LoadImageW(None, icon, IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
+            small = u.LoadImageW(None, icon, IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+            pid = ctypes.windll.kernel32.GetCurrentProcessId()
+
+            def fix(hwnd, _lparam):
+                owner = wt.DWORD()
+                u.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+                if owner.value != pid:
+                    return True
+                cls = ctypes.create_unicode_buffer(64)
+                u.GetClassNameW(hwnd, cls, 64)
+                if cls.value != "TkTopLevel":
+                    return True
+                if big:
+                    u.SendMessageW(hwnd, WM_SETICON, ICON_BIG, big)
+                if small:
+                    u.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, small)
+                return True
+
+            proc = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)(fix)
+            u.EnumWindows(proc, 0)
         except Exception:                               # noqa: BLE001
             pass
 
@@ -1162,6 +1193,7 @@ class App(tk.Tk):
         self.update_idletasks()
         self._apply_rounding()
         self._taskbar_style()
+        self.after(200, self._set_window_icon)
         self.after(400, self._taskbar_style)
         if self._first_run:
             self._switch("welcome")
