@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import ctypes
+import math
 import os
 import sys
 import threading
@@ -61,6 +62,42 @@ F_HEAD = (FONT, 13, "bold")
 F_BTN = (FONT, 10, "bold")
 
 
+try:
+    from PIL import Image, ImageDraw, ImageTk
+    HAS_PIL = True
+except Exception:                                       # noqa: BLE001
+    HAS_PIL = False
+
+
+_IMG_CACHE: dict = {}
+
+
+def _round_photo(w: int, h: int, r: int, fill: str, ss: int = 4):
+    """生成抗锯齿圆角图（4 倍超采样后缩回），带缓存。"""
+    key = (w, h, r, fill)
+    if key in _IMG_CACHE:
+        return _IMG_CACHE[key]
+    img = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([0, 0, w * ss - 1, h * ss - 1], radius=r * ss, fill=fill)
+    img = img.resize((w, h), Image.LANCZOS)
+    photo = ImageTk.PhotoImage(img)
+    _IMG_CACHE[key] = photo
+    return photo
+
+
+def draw_round(canvas: tk.Canvas, x: int, y: int, w: int, h: int, r: int,
+               fill: str, tag: str = "shape") -> None:
+    """在 canvas 上画一块抗锯齿圆角。没有 PIL 时退化为平滑多边形。"""
+    r = max(0, min(r, min(w, h) // 2))
+    if HAS_PIL and w > 1 and h > 1:
+        canvas.create_image(x, y, image=_round_photo(w, h, r, fill), anchor="nw",
+                            tags=tag, state="normal")
+    else:
+        canvas.create_polygon(rr_points(x, y, x + w - 1, y + h - 1, r),
+                              smooth=True, splinesteps=24, fill=fill, tags=tag)
+
+
 def rr_points(x1, y1, x2, y2, r):
     return [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
             x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
@@ -69,7 +106,7 @@ def rr_points(x1, y1, x2, y2, r):
 
 # ---------------------------------------------------------------- 基础控件
 class RoundCanvas(tk.Canvas):
-    """圆角容器基类：画一个圆角矩形当背景。"""
+    """圆角容器：抗锯齿圆角底图。"""
 
     def __init__(self, master, *, bg, fill, radius=RADIUS_CARD, width=None, height=None):
         kw = {}
@@ -87,19 +124,18 @@ class RoundCanvas(tk.Canvas):
         if w <= 1 or h <= 1:
             return
         self.delete("bgshape")
-        self.create_polygon(rr_points(0, 0, w - 1, h - 1, self._radius),
-                            smooth=True, splinesteps=24, fill=self._fill, tags="bgshape")
+        draw_round(self, 0, 0, w, h, self._radius, self._fill, tag="bgshape")
         self.tag_lower("bgshape")
 
     def set_fill(self, color: str):
         self._fill = color
-        self.itemconfigure("bgshape", fill=color)
+        self._redraw()
 
 
 class Card(tk.Frame):
-    """圆角卡片：外层 Canvas 画底色，内层 Frame 放内容（同色，边角被圆角包住）。"""
+    """圆角卡片：外层 Canvas 画 AA 圆角底，内层 Frame 放内容。"""
 
-    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=RADIUS_CARD, padding=14):
+    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=12, padding=14):
         super().__init__(master, bg=bg)
         self._canvas = RoundCanvas(self, bg=bg, fill=fill, radius=radius)
         self._canvas.pack(fill="both", expand=True)
@@ -114,10 +150,10 @@ class Card(tk.Frame):
 
 
 class Button(tk.Canvas):
-    """圆角按钮：文字严格居中，无描边。"""
+    """圆角按钮：AA 圆角 + 文字严格居中。"""
 
     def __init__(self, master, text, command=None, *, bg=MID, fill=SURFACE,
-                 fg=None, width=120, height=34, radius=RADIUS_CTRL,
+                 fg=None, width=120, height=34, radius=12,
                  font=F_BTN, accent=False):
         super().__init__(master, width=width, height=height, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
@@ -137,8 +173,7 @@ class Button(tk.Canvas):
     def _paint(self, color):
         self.delete("all")
         w, h = int(self["width"]), int(self["height"])
-        self.create_polygon(rr_points(0, 0, w - 1, h - 1, self._radius),
-                            smooth=True, splinesteps=24, fill=color)
+        draw_round(self, 0, 0, w, h, self._radius, color)
         self.create_text(w / 2, h / 2, text=self._text, fill=self._fg,
                          font=self._font, anchor="center")
 
@@ -159,15 +194,15 @@ class Button(tk.Canvas):
 
 
 class RoundedEntry(tk.Canvas):
-    """圆角输入框：Canvas 画圆角底，Entry 同色内嵌，四角看不到直角。"""
+    """AA 圆角输入框：Canvas 圆角底 + 同色 Entry 内嵌。"""
 
-    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=RADIUS_CTRL,
-                 height=36, show=None, fg=None):
+    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=10,
+                 height=36, show=None, fg=None, justify="left"):
         super().__init__(master, bg=bg, height=height, highlightthickness=0, bd=0, takefocus=0)
         self._fill = fill
         self._radius = radius
         self.entry = tk.Entry(self, bg=fill, fg=fg or T1, font=F_BODY, bd=0,
-                              relief="flat", highlightthickness=0,
+                              relief="flat", highlightthickness=0, justify=justify,
                               insertbackground=T1, show=show or "")
         self._win = self.create_window(12, height // 2, window=self.entry, anchor="w")
         self.bind("<Configure>", self._resize)
@@ -175,12 +210,10 @@ class RoundedEntry(tk.Canvas):
     def _resize(self, event):
         w, h = event.width, event.height
         self.delete("bgshape")
-        self.create_polygon(rr_points(0, 0, w - 1, h - 1, self._radius),
-                            smooth=True, splinesteps=24, fill=self._fill, tags="bgshape")
+        draw_round(self, 0, 0, w, h, self._radius, self._fill, tag="bgshape")
         self.tag_lower("bgshape")
         self.itemconfigure(self._win, width=max(10, w - 24), height=h - 10)
 
-    # 代理常用方法
     def get(self):
         return self.entry.get()
 
@@ -196,9 +229,9 @@ class RoundedEntry(tk.Canvas):
 
 
 class RoundedText(tk.Canvas):
-    """圆角日志区：Canvas 圆角底 + 内嵌 Text。"""
+    """AA 圆角日志区：Canvas 圆角底 + 内嵌 Text。"""
 
-    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=RADIUS_CARD, height=200):
+    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=12, height=200):
         super().__init__(master, bg=bg, height=height, highlightthickness=0, bd=0)
         self._fill = fill
         self._radius = radius
@@ -211,14 +244,15 @@ class RoundedText(tk.Canvas):
     def _resize(self, event):
         w, h = event.width, event.height
         self.delete("bgshape")
-        self.create_polygon(rr_points(0, 0, w - 1, h - 1, self._radius),
-                            smooth=True, splinesteps=24, fill=self._fill, tags="bgshape")
+        draw_round(self, 0, 0, w, h, self._radius, self._fill, tag="bgshape")
         self.tag_lower("bgshape")
         self.itemconfigure(self._win, width=max(10, w - 20), height=max(10, h - 16))
 
 
 class Toggle(tk.Canvas):
-    def __init__(self, master, value: bool, command=None, *, bg=MID, width=44, height=24):
+    """开关：胶囊形轨道 + 圆形滑块（AA）。"""
+
+    def __init__(self, master, value: bool, command=None, *, bg=MID, width=46, height=26):
         super().__init__(master, width=width, height=height, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
         self._on = value
@@ -232,13 +266,16 @@ class Toggle(tk.Canvas):
 
     def _paint(self, hovering=False):
         self.delete("all")
-        track = ACCENT if self._on else (blend(SURFACE, .06) if hovering else SURFACE)
-        self.create_polygon(rr_points(0, 2, self._cw - 1, self._ch - 3, 9),
-                            smooth=True, splinesteps=20, fill=track)
-        knob_w = 18
-        x = self._cw - knob_w - 4 if self._on else 4
-        self.create_polygon(rr_points(x, 4, x + knob_w, self._ch - 5, 7),
-                            smooth=True, splinesteps=20, fill=WHITE)
+        track = ACCENT if self._on else (blend(SURFACE, .08) if hovering else SURFACE)
+        draw_round(self, 0, 0, self._cw, self._ch, self._ch // 2, track)
+        knob = self._ch - 8
+        x = self._cw - knob - 4 if self._on else 4
+        y = 4
+        if HAS_PIL:
+            photo = _round_photo(knob, knob, knob // 2, WHITE)
+            self.create_image(x, y, image=photo, anchor="nw")
+        else:
+            self.create_oval(x, y, x + knob, y + knob, fill=WHITE, outline="")
 
     def _toggle(self, _e=None):
         self._on = not self._on
@@ -252,9 +289,11 @@ class Toggle(tk.Canvas):
 
 
 class Slider(tk.Canvas):
-    def __init__(self, master, value, minimum=5, maximum=180, step=5,
-                 command=None, bg=MID, width=240):
-        super().__init__(master, width=width, height=22, bg=bg,
+    """横向滑杆：AA 轨道 + 圆形滑块。"""
+
+    def __init__(self, master, value, minimum=5, maximum=3600, step=5,
+                 command=None, bg=MID, width=200):
+        super().__init__(master, width=width, height=24, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
         self._min, self._max, self._step = minimum, maximum, step
         self._value = max(minimum, min(maximum, int(value)))
@@ -264,21 +303,49 @@ class Slider(tk.Canvas):
         self.bind("<B1-Motion>", self._drag)
         self._paint()
 
+    # 对数刻度：5–3600 秒时，180 秒大约在一半位置，便于调常用区间
+    @property
+    def _use_log(self) -> bool:
+        return self._min > 0 and self._max / self._min > 50
+
+    def _ratio_of(self, value: int) -> float:
+        if self._use_log:
+            return math.log(value / self._min) / math.log(self._max / self._min)
+        return (value - self._min) / max(1, self._max - self._min)
+
+    def _value_of(self, ratio: float) -> int:
+        ratio = max(0.0, min(1.0, ratio))
+        if self._use_log:
+            raw = self._min * (self._max / self._min) ** ratio
+        else:
+            raw = self._min + ratio * (self._max - self._min)
+        return max(self._min, min(self._max, int(round(raw / self._step) * self._step)))
+
     def _paint(self):
         self.delete("all")
-        y = 11
-        self.create_line(4, y, self._cw - 4, y, fill=SURFACE, width=4, capstyle="round")
-        ratio = (self._value - self._min) / max(1, self._max - self._min)
-        x = int(ratio * (self._cw - 24)) + 12
-        self.create_line(4, y, x, y, fill=ACCENT, width=4, capstyle="round")
-        self.create_oval(x - 6, y - 6, x + 6, y + 6, fill=WHITE, outline="")
+        y = 12
+        draw_round(self, 6, y - 3, self._cw - 12, 6, 3, blend(SURFACE, .12))
+        x = int(self._ratio_of(self._value) * (self._cw - 24)) + 12
+        if x > 8:
+            draw_round(self, 6, y - 3, x - 6, 6, 3, ACCENT)
+        r = 7
+        if HAS_PIL:
+            photo = _round_photo(r * 2, r * 2, r, WHITE)
+            self.create_image(x - r, y - r, image=photo, anchor="nw")
+        else:
+            self.create_oval(x - r, y - r, x + r, y + r, fill=WHITE, outline="")
 
     def _drag(self, event):
-        ratio = max(0.0, min(1.0, (event.x - 12) / max(1, self._cw - 24)))
-        raw = self._min + ratio * (self._max - self._min)
-        self._value = max(self._min, min(self._max, int(round(raw / self._step) * self._step)))
+        ratio = (event.x - 12) / max(1, self._cw - 24)
+        self._value = self._value_of(ratio)
         self._paint()
         if self._command:
+            self._command(self._value)
+
+    def set_value(self, value, notify=False):
+        self._value = max(self._min, min(self._max, int(value)))
+        self._paint()
+        if notify and self._command:
             self._command(self._value)
 
     @property
@@ -287,9 +354,9 @@ class Slider(tk.Canvas):
 
 
 class NavItem(tk.Canvas):
-    """圆角导航项：选中/悬停只变底色，文字左对齐，垂直居中。"""
+    """圆角导航项：AA 圆角高亮，文字垂直居中。"""
 
-    def __init__(self, master, text, command, *, bg=DEEP, width=176, height=32):
+    def __init__(self, master, text, command, *, bg=DEEP, width=176, height=34):
         super().__init__(master, bg=bg, width=width, height=height,
                          highlightthickness=0, bd=0, takefocus=0)
         self._bg = bg
@@ -309,11 +376,10 @@ class NavItem(tk.Canvas):
         elif hover:
             fill = blend(DEEP, .05)
         else:
-            fill = DEEP
-        if fill != DEEP:
-            self.create_polygon(rr_points(0, 0, self._cw - 1, self._ch - 1, 8),
-                                smooth=True, splinesteps=20, fill=fill)
-        self.create_text(14, self._ch / 2, text=self._text, anchor="w",
+            fill = None
+        if fill:
+            draw_round(self, 0, 0, self._cw, self._ch, 10, fill)
+        self.create_text(16, self._ch / 2, text=self._text, anchor="w",
                          font=F_BODY_B if self._active else F_BODY,
                          fill=T1_D if self._active else T2_D)
 
@@ -323,7 +389,7 @@ class NavItem(tk.Canvas):
 
 
 class IconButton(tk.Canvas):
-    """标题栏小按钮：圆角、字符居中。"""
+    """标题栏小按钮：AA 圆角，字符居中。"""
 
     def __init__(self, master, glyph, command, *, bg=DEEP, width=32, height=24, danger=False):
         super().__init__(master, width=width, height=height, bg=bg,
@@ -332,17 +398,16 @@ class IconButton(tk.Canvas):
         self._danger = danger
         self._cw, self._ch = width, height
         self.bind("<Button-1>", lambda e: command())
-        self.bind("<Enter>", lambda e: self._paint(hover=True))
-        self.bind("<Leave>", lambda e: self._paint())
+        self.bind("<Enter>", lambda e: self._paint(True))
+        self.bind("<Leave>", lambda e: self._paint(False))
         self._paint()
 
     def _paint(self, hover=False):
         self.delete("all")
-        fill = (DANGER if self._danger else blend(DEEP, .12)) if hover else self._bg
         if hover:
-            self.create_polygon(rr_points(0, 0, self._cw - 1, self._ch - 1, 7),
-                                smooth=True, splinesteps=18, fill=fill)
-        self.create_text(self._cw / 2, self._ch / 2 - 1, text=self._glyph,
+            draw_round(self, 0, 0, self._cw, self._ch, 9,
+                       DANGER if self._danger else blend(DEEP, .12))
+        self.create_text(self._cw / 2, self._ch / 2, text=self._glyph,
                          fill=WHITE if hover else T2_D, font=(FONT, 10, "bold"))
 
 
@@ -721,12 +786,17 @@ class App(tk.Tk):
         srow.pack(fill="x", pady=(10, 0))
         tk.Label(srow, text="检测周期", bg=SURFACE, fg=T2_S, font=F_BODY,
                  width=8, anchor="w").pack(side="left")
-        self.v_interval = Slider(srow, self._pending_interval, 5, 180, 5,
-                                 command=self._on_interval, bg=SURFACE, width=220)
-        self.v_interval.pack(side="left")
-        self.v_interval_label = tk.Label(srow, text=f"{self._pending_interval} 秒",
-                                         bg=SURFACE, fg=T1_S, font=F_BODY, width=7, anchor="e")
-        self.v_interval_label.pack(side="right")
+        self.v_interval = Slider(srow, self._pending_interval, 5, 3600, 5,
+                                 command=self._on_interval, bg=SURFACE, width=170)
+        self.v_interval.pack(side="left", padx=(0, 8))
+        self.v_interval_entry = RoundedEntry(srow, bg=SURFACE, fill=MID,
+                                             height=28, justify="center")
+        self.v_interval_entry.configure(width=64)
+        self.v_interval_entry.set(str(self._pending_interval))
+        self.v_interval_entry.pack(side="left")
+        self.v_interval_entry.entry.bind("<Return>", self._apply_interval_entry)
+        self.v_interval_entry.entry.bind("<FocusOut>", self._apply_interval_entry)
+        tk.Label(srow, text="秒", bg=SURFACE, fg=T2_S, font=F_SMALL).pack(side="left", padx=(6, 0))
 
         rrow = tk.Frame(body, bg=SURFACE)
         rrow.pack(fill="x", pady=(10, 0))
@@ -842,8 +912,21 @@ class App(tk.Tk):
         t.configure(state="disabled")
 
     def _on_interval(self, value):
+        self._pending_interval = int(value)
+        self.v_interval_entry.set(str(self._pending_interval))
+
+    def _apply_interval_entry(self, _event=None):
+        """手动输入秒数：回车或失焦时校验并同步滑杆。"""
+        raw = self.v_interval_entry.get().strip()
+        try:
+            value = int(float(raw))
+        except (TypeError, ValueError):
+            value = self._pending_interval
+        value = max(5, min(3600, value))
         self._pending_interval = value
-        self.v_interval_label.configure(text=f"{value} 秒")
+        self.v_interval.set_value(value)
+        self.v_interval_entry.set(str(value))
+        return "break"
 
     def _save_settings(self):
         patch = {
@@ -877,9 +960,8 @@ class App(tk.Tk):
         self.v_timeout.set(str(cfg.get("timeout", 6)))
         self.v_retry.set(str(cfg.get("retry", 3)))
         self._pending_interval = int(cfg.get("interval", 20))
-        self.v_interval._value = self._pending_interval
-        self.v_interval._paint()
-        self.v_interval_label.configure(text=f"{self._pending_interval} 秒")
+        self.v_interval.set_value(self._pending_interval)
+        self.v_interval_entry.set(str(self._pending_interval))
         for widget, value in ((self.v_remember, cfg.get("remember", True)),
                               (self.v_auto, cfg.get("auto_login", True)),
                               (self.v_startup, store.get_autostart()),

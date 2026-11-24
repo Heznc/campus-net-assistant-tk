@@ -207,7 +207,7 @@ class Engine:
             for key in ("remember", "auto_login", "auto_close"):
                 if key in patch:
                     cfg[key] = bool(patch[key])
-            for key, lo, hi in (("interval", 5, 600), ("timeout", 2, 30), ("retry", 1, 20)):
+            for key, lo, hi in (("interval", 5, 3600), ("timeout", 2, 30), ("retry", 1, 20)):
                 if key in patch:
                     try:
                         cfg[key] = max(lo, min(hi, int(patch[key])))
