@@ -986,6 +986,7 @@ class App(tk.Tk):
         self._install_grips()
         self.bind("<Configure>", lambda e: e.widget is self and self._round_later())
         self._start_hidden = start_hidden
+        self._ensure_autostart()
         self._start_tray()
         if getattr(sys, "frozen", False):
             # 打包版：托盘多半会因为权限失败，先静默判定，再决定显示还是交接
@@ -1237,6 +1238,19 @@ class App(tk.Tk):
         self.withdraw()
         self._icon_shown = False
         self._notify("已收进托盘", "右键托盘图标可退出")
+
+    def _ensure_autostart(self):
+        """自启快捷方式被安全软件清掉时自动补回来。"""
+        try:
+            if not self.engine.cfg.get("autostart"):
+                return
+            path = store.startup_shortcut_path()
+            if os.path.exists(path):
+                return
+            if store.set_autostart(True):
+                self.engine.log("开机自启快捷方式丢失，已自动重建", "warn")
+        except Exception as exc:                        # noqa: BLE001
+            self.engine.log(f"自启自检失败：{exc}", "warn")
 
     def _await_tray(self, waited_ms: int):
         """等托盘结果（最多 3 秒）：成功就显示窗口，失败就静默交接，全程不闪窗。"""
