@@ -28,9 +28,9 @@ BASE = "#141416"       # 窗口底板（衬托圆角卡片）
 DEEP = "#1c1c1e"
 MID = "#2c2c2e"
 SURFACE = "#3a3a3c"
-ACCENT = "#c9c9ce"        # 高级灰：主按钮底色
-ACCENT_FG = "#161618"     # 灰底上的深色文字
-ACCENT_TRACK = "#b9b9be"  # 开关/滑杆/光环的灰
+ACCENT = "#aeb9c9"        # 钢灰蓝：灰中带一点冷色
+ACCENT_FG = "#15171b"     # 浅灰底上的深色文字
+ACCENT_TRACK = "#93a0b3"  # 开关/滑杆/光环用的深一档灰蓝
 DANGER = "#ff453a"
 WHITE = "#ffffff"
 
@@ -603,7 +603,7 @@ class StatusRing(tk.Canvas):
         "online": "#30d158",    # 已认证
         "offline": "#ffd60a",   # 待认证
         "error": "#ff453a",     # 门户不可达
-        "checking": "#b9b9be",  # 检测中 / 认证中
+        "checking": "#93a0b3",  # 检测中 / 认证中
         "idle": "#8e8e93",      # 空闲
     }
 
