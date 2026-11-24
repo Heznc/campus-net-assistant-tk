@@ -1026,8 +1026,9 @@ class App(tk.Tk):
                 new_style = (style | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
                 if new_style != style:
                     u.SetWindowLongW(hwnd, GWL_EXSTYLE, new_style)
-                    u.ShowWindow(hwnd, 0)
-                    u.ShowWindow(hwnd, 5)
+                # 让 shell 重新登记窗口（不隐藏窗口，避免任务栏按钮消失）
+                u.SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+                               0x0001 | 0x0002 | 0x0004 | 0x0020)  # NOSIZE|NOMOVE|NOZORDER|FRAMECHANGED
                 return True
 
             proc = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)(fix)
@@ -1222,6 +1223,7 @@ class App(tk.Tk):
             self._minimize()
             return
         self.withdraw()
+        self._icon_shown = False
         self._notify("已收进托盘", "右键托盘图标可退出")
 
     def _await_tray(self, waited_ms: int):
@@ -1247,7 +1249,9 @@ class App(tk.Tk):
         self.update_idletasks()
         self._apply_rounding()
         self._taskbar_style()
+        self._set_window_icon()
         self.after(200, self._taskbar_style)
+        self.after(200, self._set_window_icon)
 
     def quit_app(self):
         self.engine.shutdown()
@@ -1982,6 +1986,10 @@ class App(tk.Tk):
                 self.update_idletasks()
                 self._apply_rounding()
                 self._taskbar_style()
+                self._set_window_icon()
+            elif self.state() == "normal" and not getattr(self, "_icon_shown", False):
+                self._icon_shown = True
+                self._set_window_icon()
             if self.theme_mode == "system" and resolve_theme("system") != DARK:
                 set_palette(not DARK)
                 self._rebuild_ui()
