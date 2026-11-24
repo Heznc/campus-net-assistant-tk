@@ -41,6 +41,7 @@ IDI_APPLICATION = 32512
 
 ID_OPEN, ID_CHECK, ID_LOGIN, ID_AUTO, ID_QUIT = 1, 2, 3, 4, 9
 
+TASKBAR_CREATED = user32.RegisterWindowMessageW("TaskbarCreated")
 TIMER_ID = 7
 TIMER_MS = 2000
 
@@ -295,8 +296,16 @@ class Tray:
                 elif event == WM_RBUTTONUP:
                     self._show_menu()
                 return 0
+            if msg == TASKBAR_CREATED:
+                # 资源管理器重启，之前的图标全没了，重新注册
+                self.ok = False
+                self._add()
+                return 0
             if msg == WM_TIMER and wparam == TIMER_ID:
-                self._refresh()
+                if not self.ok:
+                    self._add()
+                else:
+                    self._refresh()
                 return 0
             if msg == WM_COMMAND:
                 return 0
