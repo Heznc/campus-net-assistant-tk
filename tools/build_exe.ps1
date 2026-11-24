@@ -9,6 +9,9 @@ python -m PyInstaller --noconfirm --onedir --windowed --name "校园网助手" `
     --icon "assets\app.ico" --version-file "tools\version_info.txt" `
     --add-data "assets;assets" tk_app.py | Out-Null
 
+# remove stale onefile build (single-file exe extracts to TEMP and can fail)
+Remove-Item (Join-Path $root "dist" | Join-Path -ChildPath "校园网助手.exe") -Force -ErrorAction SilentlyContinue
+
 $out = Join-Path $root "dist\校园网助手"
 $src = Join-Path $out "src"
 New-Item -ItemType Directory -Force $src | Out-Null
