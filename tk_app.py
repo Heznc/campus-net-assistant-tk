@@ -37,7 +37,7 @@ WHITE = "#ffffff"
 DARK = True               # 当前是否深色主题
 INK = "#ffffff"           # 文字/叠加色：深色主题叠白，浅色主题叠黑
 
-RADIUS_WIN = 44
+RADIUS_WIN = 34
 RADIUS_CARD = 28
 RADIUS_CTRL = 22
 
@@ -915,7 +915,7 @@ class App(tk.Tk):
         try:
             hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
             w, h = max(200, self.winfo_width()), max(200, self.winfo_height())
-            pts = squircle_points(0, 0, w, h, RADIUS_WIN, steps=80)
+            pts = squircle_points(0, 0, w, h, RADIUS_WIN, n=2.0, steps=90)
             flat = [int(v) for pt in pts for v in pt]
             arr = (ctypes.c_long * len(flat))(*flat)
             rgn = ctypes.windll.gdi32.CreatePolygonRgn(arr, len(pts), 2)
