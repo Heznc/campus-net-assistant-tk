@@ -196,9 +196,10 @@ def _launch_target() -> tuple[str, str]:
     launcher = os.environ.get("CNA_LAUNCHER")
     if launcher and os.path.isfile(launcher):
         return launcher, "--hidden"
-    exe = os.path.join(APP_DIR, "校园网助手.exe")
-    if os.path.isfile(exe):
-        return exe, "--hidden"
+    for cand in (os.path.join(APP_DIR, "校园网助手.exe"),
+                 os.path.join(APP_DIR, "dist", "校园网助手", "校园网助手.exe")):
+        if os.path.isfile(cand):
+            return cand, "--hidden"
     return _pythonw(), f'"{os.path.join(APP_DIR, "tk_app.py")}" --hidden'
 
 

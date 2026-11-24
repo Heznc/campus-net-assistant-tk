@@ -1114,7 +1114,10 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------ 窗口行为
     def hide_to_tray(self):
-        """点 × 只收进托盘，不退出。"""
+        """点 × 收进托盘；没有可用托盘时最小化，避免窗口消失后找不回来。"""
+        if self._tray is None or not getattr(self._tray, "ok", False):
+            self._minimize()
+            return
         self.withdraw()
         self._notify("已收进托盘", "右键托盘图标可退出")
 
@@ -1916,9 +1919,14 @@ class App(tk.Tk):
 
 
 def acquire_single_instance() -> bool:
+    """命名互斥体；先清零 last error，否则会读到别的 API 留下的 183。"""
     try:
-        handle = ctypes.windll.kernel32.CreateMutexW(None, False, "CampusNetAssistantTK")
-        if ctypes.windll.kernel32.GetLastError() == 183:
+        k32 = ctypes.windll.kernel32
+        k32.SetLastError(0)
+        handle = k32.CreateMutexW(None, False, "CampusNetAssistantTK")
+        if not handle:
+            return True
+        if k32.GetLastError() == 183:                   # ERROR_ALREADY_EXISTS
             return False
         globals()["_MUTEX"] = handle
         return True
