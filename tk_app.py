@@ -822,27 +822,45 @@ class IconButton(tk.Canvas):
 
 # ---------------------------------------------------------------- 主窗口
 class LogoMark(tk.Canvas):
-    """应用图标：圆角方块 + Wi-Fi 弧线。"""
+    """应用图标：圆角方块 + Wi-Fi 弧线，整体 4× 超采样后缩放，边缘抗锯齿。"""
 
-    def __init__(self, master, *, bg=SURFACE, size=56, color=None):
+    def __init__(self, master, *, bg=None, size=56, color=None):
+        bg = bg or SURFACE
         super().__init__(master, width=size, height=size, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
         self._size = size
+        self._bg = bg
         self._color = color or ACCENT
         self._draw()
 
     def _draw(self):
         self.delete("all")
         size = self._size
-        draw_round(self, 0, 0, size, size, size // 4, self._color)
-        cx, cy = size / 2, size * 0.68
+        if not HAS_PIL:
+            draw_round(self, 0, 0, size, size, size // 4, self._color)
+            self.create_arc(size * .2, size * .3, size * .8, size * .9,
+                            start=45, extent=90, style="arc",
+                            outline=ACCENT_FG, width=3)
+            return
+
+        ss = 4
+        big = size * ss
+        img = Image.new("RGB", (big, big), self._bg)
+        d = ImageDraw.Draw(img)
+        d.polygon(squircle_points(0, 0, big - 1, big - 1, (size // 4) * ss),
+                  fill=self._color)
+
+        cx, cy = big / 2, big * 0.70
         ink = ACCENT_FG
-        for r, w in ((size * 0.34, 3), (size * 0.22, 3)):
-            self.create_arc(cx - r, cy - r, cx + r, cy + r, start=45, extent=90,
-                            style="arc", outline=ink, width=w)
-        d = 5
-        self.create_oval(cx - d / 2, cy - d / 2 - 2, cx + d / 2, cy + d / 2 - 2,
-                         fill=ink, outline="")
+        for r_frac, w in ((0.30, 3), (0.18, 3)):
+            r = size * r_frac * ss
+            d.arc((cx - r, cy - r, cx + r, cy + r), 210, 330, fill=ink, width=w * ss)
+        dr = size * 0.055 * ss
+        d.ellipse((cx - dr, cy - dr, cx + dr, cy + dr), fill=ink)
+
+        img = img.resize((size, size), Image.LANCZOS)
+        self._photo = ImageTk.PhotoImage(img)
+        self.create_image(0, 0, image=self._photo, anchor="nw")
 
 
 class AskDialog(tk.Toplevel):
