@@ -530,7 +530,7 @@ class Toggle(tk.Canvas):
     def _paint(self, hovering=False):
         self.delete("all")
         track = ACCENT_TRACK if self._on else blend(SURFACE, .20 if hovering else .14)
-        draw_round(self, 0, 0, self._cw, self._ch, self._ch // 2, track)
+        draw_round(self, 0, 0, self._cw, self._ch, self._ch // 2, track, capsule=True)
         knob = self._ch - 8
         x = self._cw - knob - 4 if self._on else 4
         y = 4
