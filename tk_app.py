@@ -394,7 +394,7 @@ class Button(tk.Canvas):
     def _paint(self, color):
         self.delete("all")
         w, h = self._size()
-        draw_round(self, 0, 0, w, h, self._radius, color, capsule=True)
+        draw_round(self, 0, 0, w, h, self._radius, color)
         self.create_text(w / 2, h / 2, text=self._text, fill=self._fg,
                          font=self._font, anchor="center")
 
@@ -530,7 +530,7 @@ class Toggle(tk.Canvas):
     def _paint(self, hovering=False):
         self.delete("all")
         track = ACCENT_TRACK if self._on else blend(SURFACE, .20 if hovering else .14)
-        draw_round(self, 0, 0, self._cw, self._ch, self._ch // 2, track, capsule=True)
+        draw_round(self, 0, 0, self._cw, self._ch, self._ch // 2, track)
         knob = self._ch - 8
         x = self._cw - knob - 4 if self._on else 4
         y = 4
@@ -592,10 +592,25 @@ class Slider(tk.Canvas):
         if x > 8:
             draw_round(self, 6, y - 3, x - 6, 6, 3, ACCENT_TRACK, capsule=True)
         r = 7
-        under = ACCENT_TRACK if x > 6 else blend(SURFACE, .12)
         if HAS_PIL:
-            self.create_image(x - r, y - r, image=_circle_photo(r * 2, WHITE, under),
-                              anchor="nw")
+            # 滑块压在两段轨道上，四角底色要分别取左/右轨道的颜色
+            pad = r + 3
+            size = pad * 2
+            ss = 4
+            big = size * ss
+            right = blend(SURFACE, .12)
+            img = Image.new("RGB", (big, big), self.cget("bg"))
+            d = ImageDraw.Draw(img)
+            top = (y - 3 - (y - pad)) * ss
+            bot = (y + 3 - (y - pad)) * ss
+            mid = pad * ss
+            d.rectangle((0, top, mid, bot), fill=ACCENT_TRACK)
+            d.rectangle((mid, top, big, bot), fill=right)
+            inset = pad - r
+            d.ellipse((inset * ss, inset * ss, (pad + r) * ss, (pad + r) * ss), fill=WHITE)
+            img = img.resize((size, size), Image.LANCZOS)
+            self._knob_photo = ImageTk.PhotoImage(img)
+            self.create_image(x - pad, y - pad, image=self._knob_photo, anchor="nw")
         else:
             self.create_oval(x - r, y - r, x + r, y + r, fill=WHITE, outline="")
 
@@ -771,7 +786,7 @@ class IconButton(tk.Canvas):
         self.delete("all")
         if hover:
             draw_round(self, 0, 0, self._cw, self._ch, 16,
-                       DANGER if self._danger else blend(DEEP, .12), capsule=True)
+                       DANGER if self._danger else blend(DEEP, .12))
         self.create_text(self._cw / 2, self._ch / 2, text=self._glyph,
                          fill=WHITE if hover else T2_D, font=(FONT, 10, "bold"))
 
