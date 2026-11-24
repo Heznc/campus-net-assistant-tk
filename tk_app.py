@@ -14,6 +14,7 @@ from __future__ import annotations
 import ctypes
 import math
 import os
+import webbrowser
 import sys
 import threading
 import time
@@ -37,6 +38,7 @@ WHITE = "#ffffff"
 DARK = True               # 当前是否深色主题
 INK = "#ffffff"           # 文字/叠加色：深色主题叠白，浅色主题叠黑
 
+APP_VERSION = "2.1.0"
 RADIUS_WIN = 44
 RADIUS_CARD = 28
 RADIUS_CTRL = 22
@@ -819,6 +821,30 @@ class IconButton(tk.Canvas):
 
 
 # ---------------------------------------------------------------- 主窗口
+class LogoMark(tk.Canvas):
+    """应用图标：圆角方块 + Wi-Fi 弧线。"""
+
+    def __init__(self, master, *, bg=SURFACE, size=56, color=None):
+        super().__init__(master, width=size, height=size, bg=bg,
+                         highlightthickness=0, bd=0, takefocus=0)
+        self._size = size
+        self._color = color or ACCENT
+        self._draw()
+
+    def _draw(self):
+        self.delete("all")
+        size = self._size
+        draw_round(self, 0, 0, size, size, size // 4, self._color)
+        cx, cy = size / 2, size * 0.68
+        ink = ACCENT_FG
+        for r, w in ((size * 0.34, 3), (size * 0.22, 3)):
+            self.create_arc(cx - r, cy - r, cx + r, cy + r, start=45, extent=90,
+                            style="arc", outline=ink, width=w)
+        d = 5
+        self.create_oval(cx - d / 2, cy - d / 2 - 2, cx + d / 2, cy + d / 2 - 2,
+                         fill=ink, outline="")
+
+
 class AskDialog(tk.Toplevel):
     """无边框三选一对话框，返回 save / discard / cancel。"""
 
@@ -891,6 +917,7 @@ class AskDialog(tk.Toplevel):
 
 
 class App(tk.Tk):
+    REPO_URL = "https://github.com/Heznc/campus-net-assistant-tk"
     def __init__(self, engine: Engine, start_hidden: bool = False):
         super().__init__()
         self.engine = engine
@@ -1484,23 +1511,82 @@ class App(tk.Tk):
     # 关于
     def _view_about(self, parent):
         frame = tk.Frame(parent, bg=SURFACE)
-        self._page_head(frame, "关于", "Tk 原生界面版 · GPL-3.0")
-        lines = [
-            ("版本", "v2.1.0（Tk 版）"),
-            ("界面", "tkinter 原生控件，无 WebView、无本地 HTTP 服务"),
-            ("字体", "系统黑体（微软雅黑），仅用字重区分层级"),
-            ("许可证", "GNU General Public License v3.0"),
-            ("仓库", "github.com/Heznc/campus-net-assistant-tk"),
-            ("数据目录", store.DATA_DIR),
-        ]
-        for key, val in lines:
-            row = tk.Frame(frame, bg=SURFACE)
-            row.pack(fill="x", padx=18, pady=6)
-            tk.Label(row, text=key, bg=SURFACE, fg=T3_S, font=F_SMALL,
-                     width=8, anchor="w").pack(side="left")
-            tk.Label(row, text=val, bg=SURFACE, fg=T2_S, font=F_BODY,
-                     anchor="w", justify="left").pack(side="left")
+
+        head = tk.Frame(frame, bg=SURFACE)
+        head.pack(fill="x", padx=18, pady=(18, 0))
+        LogoMark(head, bg=SURFACE, size=54).pack(side="left")
+        txt = tk.Frame(head, bg=SURFACE)
+        txt.pack(side="left", padx=(14, 0))
+        tk.Label(txt, text="校园网助手", bg=SURFACE, fg=T1_S,
+                 font=(FONT, 17, "bold"), anchor="w").pack(fill="x")
+        tk.Label(txt, text=f"版本 {APP_VERSION}   ·   Tk 原生界面", bg=SURFACE,
+                 fg=T3_S, font=F_SMALL, anchor="w").pack(fill="x", pady=(2, 0))
+
+        tk.Label(frame, text="检测到断网时自动完成阳光学院上网认证，并常驻托盘守护。",
+                 bg=SURFACE, fg=T2_S, font=F_SMALL, anchor="w",
+                 justify="left", wraplength=520).pack(fill="x", padx=18, pady=(12, 0))
+
+        info = tk.Frame(frame, bg=SURFACE)
+        info.pack(fill="x", padx=18, pady=(14, 0))
+        self._about_row(info, "运行环境", self._env_text())
+        self._about_row(info, "数据目录", store.DATA_DIR,
+                        action=("打开", self._open_data_dir))
+        self._about_row(info, "开源许可", "GNU General Public License v3.0")
+
+        links = tk.Frame(frame, bg=SURFACE)
+        links.pack(fill="x", padx=18, pady=(16, 0))
+        Button(links, "项目主页", lambda: webbrowser.open(self.REPO_URL), bg=SURFACE,
+               fill=MID, width=96, height=30, font=F_SMALL).pack(side="left", padx=(0, 8))
+        Button(links, "问题反馈", lambda: webbrowser.open(self.REPO_URL + "/issues"),
+               bg=SURFACE, fill=MID, width=96, height=30,
+               font=F_SMALL).pack(side="left", padx=(0, 8))
+        Button(links, "复制诊断信息", self._copy_diag, bg=SURFACE, fill=MID,
+               width=118, height=30, font=F_SMALL).pack(side="left")
+
+        tk.Label(frame, text="© 2026 Heznc   ·   与阳光学院官方无关",
+                 bg=SURFACE, fg=T3_S, font=F_SMALL,
+                 anchor="w").pack(side="bottom", fill="x", padx=18, pady=(0, 12))
         return frame
+
+    def _about_row(self, parent, label, value, action=None):
+        row = tk.Frame(parent, bg=SURFACE)
+        row.pack(fill="x", pady=3)
+        tk.Label(row, text=label, bg=SURFACE, fg=T3_S, font=F_SMALL,
+                 width=7, anchor="w").pack(side="left")
+        tk.Label(row, text=value, bg=SURFACE, fg=T2_S, font=F_SMALL,
+                 anchor="w", justify="left").pack(side="left", fill="x", expand=True)
+        if action:
+            text, cmd = action
+            Button(row, text, cmd, bg=SURFACE, fill=MID, width=52, height=24,
+                   font=F_SMALL).pack(side="right")
+
+    @staticmethod
+    def _env_text() -> str:
+        import platform
+        py = platform.python_version()
+        osname = "Windows " + ("11" if platform.release().startswith("10") else platform.release())
+        try:
+            tkv = tk.TkVersion
+        except Exception:                               # noqa: BLE001
+            tkv = 8.6
+        return f"Python {py}  ·  tkinter {tkv}  ·  {osname}"
+
+    def _open_data_dir(self):
+        try:
+            os.startfile(store.DATA_DIR)                # noqa: S606
+        except Exception as exc:                        # noqa: BLE001
+            self.engine.log(f"打开数据目录失败：{exc}", "warn")
+
+    def _copy_diag(self):
+        st = self.engine.snapshot()
+        text = (f"校园网助手 {APP_VERSION} (Tk)\n"
+                f"{self._env_text()}\n"
+                f"数据目录: {store.DATA_DIR}\n"
+                f"状态: {st.get('phase')} / 已认证={st.get('authenticated')} / IP={st.get('ip')}\n"
+                f"门户: {self.engine.cfg.get('base_url')}")
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.engine.log("已复制诊断信息到剪贴板", "info")
 
     def _mark_baseline(self):
         self._baseline = self._snapshot()
