@@ -28,6 +28,27 @@ WM_RBUTTONUP = 0x0205
 WM_TRAY = 0x0400 + 20          # WM_USER + 20
 
 NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
+NIF_GUID = 0x20
+
+
+class GUID(ctypes.Structure):
+    _fields_ = [("Data1", w.DWORD), ("Data2", w.WORD), ("Data3", w.WORD),
+                ("Data4", ctypes.c_ubyte * 8)]
+
+
+def _make_guid(text: str) -> GUID:
+    import uuid
+    u = uuid.UUID(text)
+    g = GUID()
+    g.Data1 = u.time_low
+    g.Data2 = u.time_mid
+    g.Data3 = u.time_hi_version
+    for i, b in enumerate(u.bytes[8:]):
+        g.Data4[i] = b
+    return g
+
+
+TRAY_GUID = _make_guid("6f1a2d4c-8b3e-4f57-9a10-2c5be7d4a911")
 NIF_MESSAGE, NIF_ICON, NIF_TIP, NIF_INFO = 0x1, 0x2, 0x4, 0x10
 
 MF_STRING, MF_SEPARATOR, MF_CHECKED, MF_GRAYED, MF_DEFAULT = 0x0, 0x800, 0x8, 0x1, 0x1000
