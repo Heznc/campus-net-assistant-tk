@@ -1196,6 +1196,10 @@ class App(tk.Tk):
         if start_hidden:
             self._notify("校园网助手已启动", "在右下角托盘里，右键可操作")
             return
+        # 先设图标/任务栏样式，再显示：任务栏按钮创建时就能读到正确的图标
+        self.update_idletasks()
+        self._set_window_icon()
+        self._taskbar_style()
         self.deiconify()
         self.overrideredirect(True)
         self._set_window_icon()
