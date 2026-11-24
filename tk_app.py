@@ -28,7 +28,9 @@ BASE = "#141416"       # 窗口底板（衬托圆角卡片）
 DEEP = "#1c1c1e"
 MID = "#2c2c2e"
 SURFACE = "#3a3a3c"
-ACCENT = "#0a84ff"
+ACCENT = "#c9c9ce"        # 高级灰：主按钮底色
+ACCENT_FG = "#161618"     # 灰底上的深色文字
+ACCENT_TRACK = "#b9b9be"  # 开关/滑杆/光环的灰
 DANGER = "#ff453a"
 WHITE = "#ffffff"
 
@@ -71,6 +73,15 @@ except Exception:                                       # noqa: BLE001
 
 
 _IMG_CACHE: dict = {}
+
+
+def darken(bg: str, amount: float) -> str:
+    """把颜色按比例压暗（浅色底做悬停/按下态）。"""
+    bg = bg.lstrip("#")
+    r, g, b = (int(bg[i:i + 2], 16) for i in (0, 2, 4))
+    return "#%02x%02x%02x" % (round(r * (1 - amount)),
+                             round(g * (1 - amount)),
+                             round(b * (1 - amount)))
 
 
 def _round_photo(w: int, h: int, r: int, fill: str, ss: int = 4):
@@ -289,16 +300,16 @@ class Button(tk.Canvas):
         super().__init__(master, width=width, height=height, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
         self._bg, self._fill = bg, fill
-        self._fg = fg or (WHITE if accent else T1_S)
+        self._fg = fg or (ACCENT_FG if accent else T1_S)
         self._radius = radius
         self._text = text
         self._font = font
         self._command = command
         self._enabled = True
         self._paint(self._fill)
-        self.bind("<Enter>", lambda e: self._enabled and self._paint(blend(self._fill, .06)))
+        self.bind("<Enter>", lambda e: self._enabled and self._paint(self._state_color(.06)))
         self.bind("<Leave>", lambda e: self._paint(self._fill))
-        self.bind("<ButtonPress-1>", lambda e: self._enabled and self._paint(blend(self._fill, .12)))
+        self.bind("<ButtonPress-1>", lambda e: self._enabled and self._paint(self._state_color(.12)))
         self.bind("<ButtonRelease-1>", self._release)
         self.bind("<Configure>", lambda e: self._paint(self._fill))
 
@@ -317,10 +328,16 @@ class Button(tk.Canvas):
         self.create_text(w / 2, h / 2, text=self._text, fill=self._fg,
                          font=self._font, anchor="center")
 
+    def _state_color(self, amount: float):
+        """浅灰按钮变暗，深色按钮提亮。"""
+        if self._fill == ACCENT:
+            return darken(self._fill, amount)
+        return blend(self._fill, amount)
+
     def _release(self, event):
         w, h = self._size()
         inside = 0 <= event.x <= w and 0 <= event.y <= h
-        self._paint(blend(self._fill, .06) if inside else self._fill)
+        self._paint(self._state_color(.06) if inside else self._fill)
         if inside and self._enabled and self._command:
             self._command()
 
@@ -330,7 +347,7 @@ class Button(tk.Canvas):
 
     def set_enabled(self, enabled):
         self._enabled = enabled
-        self._fg = (WHITE if self._fill == ACCENT else T1_S) if enabled else T3_S
+        self._fg = (ACCENT_FG if self._fill == ACCENT else T1_S) if enabled else T3_S
         self._paint(self._fill)
 
 
@@ -437,7 +454,7 @@ class Toggle(tk.Canvas):
 
     def _paint(self, hovering=False):
         self.delete("all")
-        track = ACCENT if self._on else (blend(SURFACE, .08) if hovering else SURFACE)
+        track = ACCENT_TRACK if self._on else (blend(SURFACE, .08) if hovering else SURFACE)
         draw_round(self, 0, 0, self._cw, self._ch, self._ch // 2, track)
         knob = self._ch - 8
         x = self._cw - knob - 4 if self._on else 4
@@ -494,7 +511,7 @@ class Slider(tk.Canvas):
         draw_round(self, 6, y - 3, self._cw - 12, 6, 3, blend(SURFACE, .12))
         x = int(self._ratio_of(self._value) * (self._cw - 24)) + 12
         if x > 8:
-            draw_round(self, 6, y - 3, x - 6, 6, 3, ACCENT)
+            draw_round(self, 6, y - 3, x - 6, 6, 3, ACCENT_TRACK)
         r = 7
         draw_round(self, x - r, y - r, r * 2, r * 2, r, WHITE)
 
@@ -554,7 +571,7 @@ class NavItem(tk.Canvas):
 class Spinner(tk.Canvas):
     """保存中的转圈指示器。"""
 
-    def __init__(self, master, *, bg=SURFACE, size=18, color=ACCENT):
+    def __init__(self, master, *, bg=SURFACE, size=18, color=ACCENT_TRACK):
         super().__init__(master, width=size, height=size, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
         self._size = size
@@ -586,7 +603,7 @@ class StatusRing(tk.Canvas):
         "online": "#30d158",    # 已认证
         "offline": "#ffd60a",   # 待认证
         "error": "#ff453a",     # 门户不可达
-        "checking": "#0a84ff",  # 检测中 / 认证中
+        "checking": "#b9b9be",  # 检测中 / 认证中
         "idle": "#8e8e93",      # 空闲
     }
 
