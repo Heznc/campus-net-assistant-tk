@@ -64,7 +64,7 @@ F_BTN = (FONT, 10, "bold")
 
 
 try:
-    from PIL import Image, ImageDraw, ImageTk
+    from PIL import Image, ImageDraw, ImageFilter, ImageTk
     HAS_PIL = True
 except Exception:                                       # noqa: BLE001
     HAS_PIL = False
@@ -579,6 +579,64 @@ class Spinner(tk.Canvas):
             self._job = None
 
 
+class StatusRing(tk.Canvas):
+    """状态光环：外圈柔光 + 主环 + 中心点，颜色随网络状态变化。"""
+
+    COLORS = {
+        "online": "#30d158",    # 已认证
+        "offline": "#ffd60a",   # 待认证
+        "error": "#ff453a",     # 门户不可达
+        "checking": "#0a84ff",  # 检测中 / 认证中
+        "idle": "#8e8e93",      # 空闲
+    }
+
+    def __init__(self, master, *, bg=MID, size=44):
+        super().__init__(master, width=size, height=size, bg=bg,
+                         highlightthickness=0, bd=0, takefocus=0)
+        self._size = size
+        self._bg = bg
+        self._key = None
+        self.set_state("idle")
+
+    def set_state(self, key: str):
+        key = key if key in self.COLORS else "idle"
+        if key == self._key:
+            return
+        self._key = key
+        self._render(self.COLORS[key])
+
+    def _render(self, color: str):
+        self.delete("all")
+        size = self._size
+        if HAS_PIL:
+            ss = 4
+            big = size * ss
+            img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            pad = 6 * ss
+            box = (pad, pad, big - pad - 1, big - pad - 1)
+            # 外发光
+            d.ellipse(box, outline=color, width=5 * ss)
+            glow = img.filter(ImageFilter.GaussianBlur(4 * ss))
+            # 主环
+            ring = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+            dr = ImageDraw.Draw(ring)
+            dr.ellipse(box, outline=color, width=3 * ss)
+            # 中心点
+            cx = cy = big / 2
+            r = 4.5 * ss
+            dr.ellipse((cx - r, cy - r, cx + r, cy + r), fill=color)
+            img = Image.alpha_composite(glow, ring)
+            img = img.resize((size, size), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            self._photo = photo
+            self.create_image(0, 0, image=photo, anchor="nw")
+        else:
+            pad = 6
+            self.create_oval(pad, pad, size - pad, size - pad, outline=color, width=3)
+            self.create_oval(size / 2 - 4, size / 2 - 4, size / 2 + 4, size / 2 + 4, fill=color)
+
+
 class IconButton(tk.Canvas):
     """标题栏小按钮：AA 圆角，字符居中。"""
 
@@ -971,9 +1029,12 @@ class App(tk.Tk):
     def _build_status(self, mid):
         tk.Label(mid, text="当前状态", bg=MID, fg=T3, font=F_SMALL,
                  anchor="w", padx=16).pack(fill="x", pady=(16, 2))
-        self.st_title = tk.Label(mid, text="检测中", bg=MID, fg=T1, font=F_TITLE,
-                                 anchor="w", padx=16)
-        self.st_title.pack(fill="x")
+        head = tk.Frame(mid, bg=MID)
+        head.pack(fill="x", padx=16)
+        self.st_ring = StatusRing(head, bg=MID, size=46)
+        self.st_ring.pack(side="left", pady=(2, 0))
+        self.st_title = tk.Label(head, text="检测中", bg=MID, fg=T1, font=F_TITLE, anchor="w")
+        self.st_title.pack(side="left", padx=(10, 0))
         self.st_msg = tk.Label(mid, text="正在读取认证门户", bg=MID, fg=T2, font=F_BODY,
                                anchor="w", justify="left", wraplength=252, padx=16, pady=4)
         self.st_msg.pack(fill="x")
@@ -1477,6 +1538,17 @@ class App(tk.Tk):
                   "logging_in": "正在认证", "checking": "正在检测",
                   "error": "认证门户不可达", "idle": "准备就绪"}
         self.st_title.configure(text=titles.get(st["phase"], "准备就绪"))
+        if st.get("authenticated"):
+            ring_key = "online"
+        elif st["phase"] in ("checking", "logging_in"):
+            ring_key = "checking"
+        elif st["portal_reachable"]:
+            ring_key = "offline"
+        elif st["phase"] == "error":
+            ring_key = "error"
+        else:
+            ring_key = "idle"
+        self.st_ring.set_state(ring_key)
         self.st_msg.configure(text=st["message"] or "")
         self.st_ip.configure(text=st["ip"] or "—")
         self.st_last.configure(text=self._fmt_time(st["last_login"]))
