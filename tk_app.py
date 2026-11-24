@@ -31,9 +31,9 @@ ACCENT = "#0a84ff"
 DANGER = "#ff453a"
 WHITE = "#ffffff"
 
-RADIUS_WIN = 12
-RADIUS_CARD = 10
-RADIUS_CTRL = 8
+RADIUS_WIN = 34
+RADIUS_CARD = 22
+RADIUS_CTRL = 18
 
 
 def blend(bg: str, alpha: float) -> str:
@@ -215,7 +215,7 @@ class ScrollFrame(tk.Frame):
 class Card(tk.Frame):
     """圆角卡片：外层 Canvas 画 AA 圆角底，内层 Frame 放内容。"""
 
-    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=12, padding=14):
+    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=RADIUS_CARD, padding=14):
         super().__init__(master, bg=bg)
         self._canvas = RoundCanvas(self, bg=bg, fill=fill, radius=radius)
         self._canvas.pack(fill="both", expand=True)
@@ -233,7 +233,7 @@ class Button(tk.Canvas):
     """圆角按钮：AA 圆角 + 文字严格居中。"""
 
     def __init__(self, master, text, command=None, *, bg=MID, fill=SURFACE,
-                 fg=None, width=120, height=34, radius=12,
+                 fg=None, width=120, height=34, radius=RADIUS_CTRL,
                  font=F_BTN, accent=False):
         super().__init__(master, width=width, height=height, bg=bg,
                          highlightthickness=0, bd=0, takefocus=0)
@@ -276,7 +276,7 @@ class Button(tk.Canvas):
 class RoundedEntry(tk.Canvas):
     """AA 圆角输入框：Canvas 圆角底 + 同色 Entry 内嵌。"""
 
-    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=10,
+    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=RADIUS_CTRL,
                  height=36, show=None, fg=None, justify="left"):
         super().__init__(master, bg=bg, height=height, highlightthickness=0, bd=0, takefocus=0)
         self._fill = fill
@@ -311,7 +311,7 @@ class RoundedEntry(tk.Canvas):
 class RoundedText(tk.Canvas):
     """AA 圆角日志区：Canvas 圆角底 + 内嵌 Text。"""
 
-    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=12, height=200):
+    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=RADIUS_CARD, height=200):
         super().__init__(master, bg=bg, height=height, highlightthickness=0, bd=0)
         self._fill = fill
         self._radius = radius
@@ -347,11 +347,11 @@ class Toggle(tk.Canvas):
     def _paint(self, hovering=False):
         self.delete("all")
         track = ACCENT if self._on else (blend(SURFACE, .08) if hovering else SURFACE)
-        draw_round(self, 0, 0, self._cw, self._ch, 9, track)
+        draw_round(self, 0, 0, self._cw, self._ch, self._ch // 2, track)
         knob = self._ch - 8
         x = self._cw - knob - 4 if self._on else 4
         y = 4
-        draw_round(self, x, y, knob, knob, 7, WHITE)
+        draw_round(self, x, y, knob, knob, knob // 2, WHITE)
 
     def _toggle(self, _e=None):
         self._on = not self._on
@@ -405,7 +405,7 @@ class Slider(tk.Canvas):
         if x > 8:
             draw_round(self, 6, y - 3, x - 6, 6, 3, ACCENT)
         r = 7
-        draw_round(self, x - r, y - r, r * 2, r * 2, 5, WHITE)
+        draw_round(self, x - r, y - r, r * 2, r * 2, r, WHITE)
 
     def _drag(self, event):
         ratio = (event.x - 12) / max(1, self._cw - 24)
@@ -450,7 +450,7 @@ class NavItem(tk.Canvas):
         else:
             fill = None
         if fill:
-            draw_round(self, 0, 0, self._cw, self._ch, 10, fill)
+            draw_round(self, 0, 0, self._cw, self._ch, 16, fill)
         self.create_text(16, self._ch / 2, text=self._text, anchor="w",
                          font=F_BODY_B if self._active else F_BODY,
                          fill=T1_D if self._active else T2_D)
@@ -477,7 +477,7 @@ class IconButton(tk.Canvas):
     def _paint(self, hover=False):
         self.delete("all")
         if hover:
-            draw_round(self, 0, 0, self._cw, self._ch, 9,
+            draw_round(self, 0, 0, self._cw, self._ch, 14,
                        DANGER if self._danger else blend(DEEP, .12))
         self.create_text(self._cw / 2, self._ch / 2, text=self._glyph,
                          fill=WHITE if hover else T2_D, font=(FONT, 10, "bold"))
@@ -728,11 +728,11 @@ class App(tk.Tk):
         bar.pack(fill="x")
         bar.pack_propagate(False)
         title = tk.Label(bar, text="校园网助手", bg=DEEP, fg=T3_D, font=F_SMALL)
-        title.pack(side="left", padx=14)
+        title.pack(side="left", padx=(24, 0))
 
         for text, cmd, danger in (("×", self.hide_to_tray, True), ("—", self._minimize, False)):
             IconButton(bar, text, cmd, bg=DEEP, danger=danger).pack(
-                side="right", padx=(0, 4), pady=6)
+                side="right", padx=(0, 10), pady=6)
 
         for w in (bar, title):
             w.bind("<ButtonPress-1>", self._drag_start)
