@@ -33,6 +33,9 @@ if FROZEN:
 else:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
     DATA_DIR = os.path.join(APP_DIR, "data")
+_override = os.environ.get("CNA_DATA_DIR")
+if _override:
+    DATA_DIR = _override
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 LOG_PATH = os.path.join(DATA_DIR, "assistant.log")
 

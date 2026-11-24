@@ -15,6 +15,7 @@ import ctypes
 import math
 import os
 import webbrowser
+import subprocess
 import sys
 import threading
 import time
@@ -330,6 +331,14 @@ class ScrollFrame(tk.Frame):
             if w is self or w is self.canvas or w is self.inner:
                 return True
             w = getattr(w, "master", None)
+        return False
+
+
+def is_elevated() -> bool:
+    """当前进程是否以管理员（高完整性）运行。"""
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:                                   # noqa: BLE001
         return False
 
 
@@ -1181,6 +1190,42 @@ class App(tk.Tk):
         except Exception as exc:                        # noqa: BLE001
             self.engine.log(f"托盘初始化失败：{exc}", "warn")
 
+        # 托盘不可用时说明原因（高完整性进程无法往普通任务栏加图标）
+        def _check_tray():
+            if self._tray is not None and getattr(self._tray, "ok", False):
+                return
+            if getattr(sys, "frozen", False) and self._handoff_to_python():
+                return
+            if is_elevated():
+                self.engine.log("托盘图标需要普通权限：请从桌面/开始菜单启动，别用管理员终端启动", "warn")
+                self._toast("托盘图标未显示",
+                            "当前以管理员身份运行，任务栏不接受加图标。\n"
+                            "用桌面快捷方式或「启动.vbs」重新打开即可。")
+        self.after(1500, _check_tray)
+
+    def _handoff_to_python(self) -> bool:
+        """打包版加不了托盘图标时，改用 pythonw 跑随附的源码（托盘可用）。"""
+        base = os.path.dirname(sys.executable)
+        for rel in ("src", "."):
+            script = os.path.join(base, rel, "tk_app.py") if rel != "." else \
+                os.path.join(base, "tk_app.py")
+            if not os.path.isfile(script):
+                continue
+            for py in ("pythonw.exe", "python.exe"):
+                try:
+                    env = dict(os.environ)
+                    env["CNA_DATA_DIR"] = store.DATA_DIR
+                    subprocess.Popen([py, script, "--hidden", "--force"],
+                                     cwd=os.path.dirname(script),
+                                     env=env, close_fds=True,
+                                     creationflags=0x08000000)     # CREATE_NO_WINDOW
+                except OSError:
+                    continue
+                self.engine.log("打包版无法注册托盘图标，已转用 pythonw 启动", "info")
+                self.after(300, self.quit_app)
+                return True
+        return False
+
     def _notify(self, title, text):
         if self._tray is not None:
             try:
@@ -1991,7 +2036,8 @@ def _hide_console() -> None:
 def main() -> int:
     _hide_console()
     hidden = "--hidden" in sys.argv
-    if not acquire_single_instance():
+    force = "--force" in sys.argv
+    if not force and not acquire_single_instance():
         return 0
     engine = Engine()
     app = App(engine, start_hidden=hidden)

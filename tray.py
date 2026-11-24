@@ -58,12 +58,14 @@ class WNDCLASSEXW(ctypes.Structure):
 
 
 class NOTIFYICONDATAW(ctypes.Structure):
+    """对齐 64 位 Vista+ 布局（含 guidItem / hBalloonIcon），cbSize 必须精确。"""
     _fields_ = [
         ("cbSize", w.DWORD), ("hWnd", w.HWND), ("uID", w.UINT),
         ("uFlags", w.UINT), ("uCallbackMessage", w.UINT), ("hIcon", w.HICON),
         ("szTip", w.WCHAR * 128), ("dwState", w.DWORD), ("dwStateMask", w.DWORD),
         ("szInfo", w.WCHAR * 256), ("uVersion", w.UINT),
         ("szInfoTitle", w.WCHAR * 64), ("dwInfoFlags", w.DWORD),
+        ("guidItem", ctypes.c_byte * 16), ("hBalloonIcon", w.HICON),
     ]
 
 
