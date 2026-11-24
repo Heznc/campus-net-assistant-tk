@@ -300,16 +300,26 @@ class Button(tk.Canvas):
         self.bind("<Leave>", lambda e: self._paint(self._fill))
         self.bind("<ButtonPress-1>", lambda e: self._enabled and self._paint(blend(self._fill, .12)))
         self.bind("<ButtonRelease-1>", self._release)
+        self.bind("<Configure>", lambda e: self._paint(self._fill))
+
+    def _size(self):
+        """按实际尺寸绘制（pack fill 后 canvas 宽高会变）。"""
+        w = self.winfo_width()
+        h = self.winfo_height()
+        if w <= 1 or h <= 1:
+            w, h = int(self["width"]), int(self["height"])
+        return w, h
 
     def _paint(self, color):
         self.delete("all")
-        w, h = int(self["width"]), int(self["height"])
+        w, h = self._size()
         draw_round(self, 0, 0, w, h, self._radius, color)
         self.create_text(w / 2, h / 2, text=self._text, fill=self._fg,
                          font=self._font, anchor="center")
 
     def _release(self, event):
-        inside = 0 <= event.x <= int(self["width"]) and 0 <= event.y <= int(self["height"])
+        w, h = self._size()
+        inside = 0 <= event.x <= w and 0 <= event.y <= h
         self._paint(blend(self._fill, .06) if inside else self._fill)
         if inside and self._enabled and self._command:
             self._command()
