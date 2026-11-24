@@ -984,8 +984,13 @@ class App(tk.Tk):
         self._build()
         self._install_grips()
         self.bind("<Configure>", lambda e: e.widget is self and self._round_later())
-        self.after(80, lambda: self._finish_show(start_hidden))
+        self._start_hidden = start_hidden
         self._start_tray()
+        if getattr(sys, "frozen", False):
+            # 打包版：托盘多半会因为权限失败，先静默判定，再决定显示还是交接
+            self._await_tray(0)
+        else:
+            self.after(80, lambda: self._finish_show(start_hidden))
         self.bind_all("<MouseWheel>", self._on_wheel)
         threading.Thread(target=engine.run_forever, daemon=True).start()
         self._tick()
@@ -1218,6 +1223,16 @@ class App(tk.Tk):
             return
         self.withdraw()
         self._notify("已收进托盘", "右键托盘图标可退出")
+
+    def _await_tray(self, waited_ms: int):
+        """等托盘结果（最多 3 秒）：成功就显示窗口，失败就静默交接，全程不闪窗。"""
+        ok = self._tray is not None and getattr(self._tray, "ok", False)
+        if ok or waited_ms >= 3000:
+            if not ok and self._handoff_to_python():
+                return
+            self._finish_show(self._start_hidden)
+            return
+        self.after(200, lambda: self._await_tray(waited_ms + 200))
 
     def show_window(self):
         self.deiconify()
