@@ -128,6 +128,37 @@ def _squircle_photo(w: int, h: int, r: int, fill: str, ss: int = 4):
     return photo
 
 
+def _corner_mask(size: int, r: int, color: str, corner: str):
+    """生成 r×r 的角落遮罩：圆角外侧填父级底色，内侧透明。"""
+    key = ("mask", size, r, color, corner)
+    if key in _IMG_CACHE:
+        return _IMG_CACHE[key]
+    if not HAS_PIL:
+        return None
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    px = img.load()
+    rgb = tuple(int(color.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    e = 2.0 / SQUIRCLE_N
+    for y in range(size):
+        for x in range(size):
+            if corner == "tr":
+                u, v = size - 1 - x, y
+            elif corner == "bl":
+                u, v = x, size - 1 - y
+            elif corner == "br":
+                u, v = size - 1 - x, size - 1 - y
+            else:
+                u, v = x, y
+            if u >= r or v >= r:
+                continue
+            inside = ((r - u) / r) ** SQUIRCLE_N + ((r - v) / r) ** SQUIRCLE_N <= 1.0
+            if not inside:
+                px[x, y] = (rgb[0], rgb[1], rgb[2], 255)
+    photo = ImageTk.PhotoImage(img)
+    _IMG_CACHE[key] = photo
+    return photo
+
+
 def draw_round(canvas: tk.Canvas, x: int, y: int, w: int, h: int, r: int,
                fill: str, tag: str = "shape") -> None:
     """在 canvas 上画一块抗锯齿的**超椭圆**圆角。没有 PIL 时退化为多边形。"""
@@ -214,20 +245,34 @@ class ScrollFrame(tk.Frame):
 
 
 class Card(tk.Frame):
-    """圆角卡片：外层 Canvas 画 AA 圆角底，内层 Frame 放内容。"""
+    """圆角卡片：Canvas 画 AA 圆角底，内层 Frame 铺满，四角再用遮罩补成圆角。"""
 
-    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=RADIUS_CARD, padding=14):
+    def __init__(self, master, *, bg=SURFACE, fill=MID, radius=RADIUS_CARD, padding=6):
         super().__init__(master, bg=bg)
+        self._bg = bg
+        self._radius = radius
         self._canvas = RoundCanvas(self, bg=bg, fill=fill, radius=radius)
         self._canvas.pack(fill="both", expand=True)
         self.body = tk.Frame(self._canvas, bg=fill)
         self._pad = padding
         self._win = self._canvas.create_window(padding, padding, window=self.body, anchor="nw")
+        self._masks = []
         self._canvas.bind("<Configure>", self._on_resize, add="+")
 
     def _on_resize(self, event):
-        self._canvas.itemconfigure(self._win, width=max(10, event.width - self._pad * 2),
-                                   height=max(10, event.height - self._pad * 2))
+        w, h = event.width, event.height
+        self._canvas.itemconfigure(self._win, width=max(10, w - self._pad * 2),
+                                   height=max(10, h - self._pad * 2))
+        r = min(self._radius, max(2, min(w, h) // 2))
+        for item in self._masks:
+            self._canvas.delete(item)
+        self._masks = []
+        for corner, pos in (("tl", (0, 0)), ("tr", (w - r, 0)),
+                            ("bl", (0, h - r)), ("br", (w - r, h - r))):
+            photo = _corner_mask(r, r, self._bg, corner)
+            if photo is not None:
+                self._masks.append(self._canvas.create_image(pos[0], pos[1], image=photo,
+                                                             anchor="nw"))
 
 
 class Button(tk.Canvas):
@@ -540,7 +585,9 @@ class App(tk.Tk):
             hr = ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 hwnd, 33, ctypes.byref(pref), ctypes.sizeof(pref))   # 半径交给系统
             if hr == 0:
-                return
+                # 即使系统接管，也清掉可能残留的区域，避免双重裁剪
+                ctypes.windll.user32.SetWindowRgn(hwnd, None, True)
+            return
         except Exception:                               # noqa: BLE001
             pass
         try:
@@ -725,7 +772,7 @@ class App(tk.Tk):
         self.side_status.pack(side="bottom", fill="x", pady=(0, 12))
 
         # 第二层：中栏卡片（浮在侧栏之上，四周留 8px）
-        mid_card = Card(body, bg=DEEP, fill=MID, radius=RADIUS_CARD, padding=0)
+        mid_card = Card(body, bg=DEEP, fill=MID, radius=RADIUS_CARD, padding=6)
         mid_card.pack(side="left", fill="both", expand=True, padx=(0, 6), pady=6)
         mid = mid_card.body
 
@@ -735,7 +782,7 @@ class App(tk.Tk):
         self._build_status(status)
 
         # 第三层：内容卡片（嵌在中栏卡片里，右上下一圈 8px 露出中栏色）
-        content_card = Card(mid, bg=MID, fill=SURFACE, radius=RADIUS_CARD - 2, padding=0)
+        content_card = Card(mid, bg=MID, fill=SURFACE, radius=RADIUS_CARD - 2, padding=6)
         content_card.pack(side="left", fill="both", expand=True, padx=(0, 6), pady=6)
         content = content_card.body
         self._content = content
@@ -743,14 +790,14 @@ class App(tk.Tk):
         self._switch_manual(self._current)
 
     def _build_titlebar(self):
-        bar = tk.Frame(self, bg=BASE, height=36)
+        bar = tk.Frame(self, bg=DEEP, height=34)
         bar.pack(fill="x")
         bar.pack_propagate(False)
-        title = tk.Label(bar, text="校园网助手", bg=BASE, fg=T3_D, font=F_SMALL)
+        title = tk.Label(bar, text="校园网助手", bg=DEEP, fg=T3_D, font=F_SMALL)
         title.pack(side="left", padx=(24, 0))
 
         for text, cmd, danger in (("×", self.hide_to_tray, True), ("—", self._minimize, False)):
-            IconButton(bar, text, cmd, bg=BASE, danger=danger).pack(
+            IconButton(bar, text, cmd, bg=DEEP, danger=danger).pack(
                 side="right", padx=(0, 10), pady=6)
 
         for w in (bar, title):
@@ -950,7 +997,7 @@ class App(tk.Tk):
         self.v_remember = self._make_switch(body, "记住密码", "用 DPAPI 加密保存在本机", compact=True)
 
         tk.Label(body, text="自动认证", bg=SURFACE, fg=T3_S, font=F_SMALL_B,
-                 anchor="w").pack(fill="x", pady=(10, 4))
+                 anchor="w").pack(fill="x", pady=(6, 3))
         self.v_auto = self._make_switch(body, "断网自动登录", "检测到未认证时自动提交账号密码")
 
         srow = tk.Frame(body, bg=SURFACE)
@@ -977,14 +1024,14 @@ class App(tk.Tk):
         self.v_base = self._field(body, "认证门户地址")
 
         tk.Label(body, text="系统", bg=SURFACE, fg=T3_S, font=F_SMALL_B,
-                 anchor="w").pack(fill="x", pady=(10, 4))
+                 anchor="w").pack(fill="x", pady=(6, 3))
         pair = tk.Frame(body, bg=SURFACE)
         pair.pack(fill="x")
         self.v_startup = self._make_switch(pair, "开机自启", "", side="left")
         self.v_autoclose = self._make_switch(pair, "关闭退出", "", side="left")
 
         bar = tk.Frame(outer, bg=SURFACE)
-        bar.pack(fill="x", padx=16, pady=(4, 6))
+        bar.pack(fill="x", padx=16, pady=(2, 2))
         Button(bar, "保存设置", self._save_settings, bg=SURFACE, fill=ACCENT,
                accent=True, width=140, height=36).pack(side="right")
 
@@ -992,7 +1039,7 @@ class App(tk.Tk):
 
     def _field(self, parent, label, *, secret=False):
         tk.Label(parent, text=label, bg=SURFACE, fg=T2_S, font=F_SMALL,
-                 anchor="w").pack(fill="x", pady=(4, 3))
+                 anchor="w").pack(fill="x", pady=(3, 2))
         entry = RoundedEntry(parent, bg=SURFACE, fill=MID, height=32,
                              show="•" if secret else None)
         entry.pack(fill="x")
@@ -1013,7 +1060,7 @@ class App(tk.Tk):
         if side:
             row.pack(side=side, fill="x", expand=True, pady=3, padx=(0, 8))
         else:
-            row.pack(fill="x", pady=2)
+            row.pack(fill="x", pady=1)
         txt = tk.Frame(row, bg=SURFACE)
         txt.pack(side="left", fill="x", expand=True)
         tk.Label(txt, text=label, bg=SURFACE, fg=T1_S, font=F_BODY, anchor="w").pack(fill="x")
