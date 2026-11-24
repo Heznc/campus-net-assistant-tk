@@ -1215,13 +1215,14 @@ class App(tk.Tk):
                 try:
                     env = dict(os.environ)
                     env["CNA_DATA_DIR"] = store.DATA_DIR
-                    subprocess.Popen([py, script, "--hidden", "--force"],
+                    subprocess.Popen([py, script] + (["--hidden"] if "--hidden" in sys.argv else []),
                                      cwd=os.path.dirname(script),
                                      env=env, close_fds=True,
                                      creationflags=0x08000000)     # CREATE_NO_WINDOW
                 except OSError:
                     continue
                 self.engine.log("打包版无法注册托盘图标，已转用 pythonw 启动", "info")
+                _release_mutex()
                 self.after(300, self.quit_app)
                 return True
         return False
@@ -2007,6 +2008,16 @@ class App(tk.Tk):
         return time.strftime("%m-%d %H:%M", time.localtime(ts)) if ts else "—"
 
 
+def _release_mutex() -> None:
+    handle = globals().get("_MUTEX")
+    if handle:
+        try:
+            ctypes.windll.kernel32.CloseHandle(handle)
+        except Exception:                           # noqa: BLE001
+            pass
+        globals()["_MUTEX"] = None
+
+
 def acquire_single_instance() -> bool:
     """命名互斥体；先清零 last error，否则会读到别的 API 留下的 183。"""
     try:
@@ -2038,6 +2049,16 @@ def main() -> int:
     hidden = "--hidden" in sys.argv
     force = "--force" in sys.argv
     if not force and not acquire_single_instance():
+        try:
+            engine = None
+            import store as _store
+            _store.ensure_dirs()
+            with open(os.path.join(_store.DATA_DIR, "assistant.log"), "a",
+                      encoding="utf-8") as fh:
+                fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [info] "
+                         f"已有实例在运行，本次启动退出\n")
+        except Exception:                           # noqa: BLE001
+            pass
         return 0
     engine = Engine()
     app = App(engine, start_hidden=hidden)
@@ -2048,5 +2069,25 @@ def main() -> int:
     return 0
 
 
+def _install_crash_log() -> None:
+    """windowed 模式没有控制台，未捕获异常写进 data\\crash.log。"""
+    import traceback
+
+    def hook(exc_type, exc, tb):
+        try:
+            import store as _store
+            _store.ensure_dirs()
+            with open(os.path.join(_store.DATA_DIR, "crash.log"), "a",
+                      encoding="utf-8") as fh:
+                fh.write(f"\n==== {time.strftime('%Y-%m-%d %H:%M:%S')} ====\n")
+                traceback.print_exception(exc_type, exc, tb, file=fh)
+        except Exception:                           # noqa: BLE001
+            pass
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = hook
+
+
 if __name__ == "__main__":
+    _install_crash_log()
     sys.exit(main())
