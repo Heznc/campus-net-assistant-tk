@@ -86,16 +86,58 @@ def _round_photo(w: int, h: int, r: int, fill: str, ss: int = 4):
     return photo
 
 
+SQUIRCLE_N = 4.0        # 指数越大越方；4 接近 iOS 的超椭圆
+
+
+def squircle_points(x0: float, y0: float, w: float, h: float, r: float,
+                    n: float = SQUIRCLE_N, steps: int = 16):
+    """超椭圆（squircle）圆角矩形的轮廓点。"""
+    r = max(0.0, min(r, w / 2, h / 2))
+    if r <= 0:
+        return [(x0, y0), (x0 + w, y0), (x0 + w, y0 + h), (x0, y0 + h)]
+    e = 2.0 / n
+    pts = []
+
+    def arc(cx, cy, t0, t1):
+        for i in range(steps + 1):
+            t = t0 + (t1 - t0) * i / steps
+            c, sn = math.cos(t), math.sin(t)
+            u = (abs(c) ** e) * (1 if c >= 0 else -1)
+            v = (abs(sn) ** e) * (1 if sn >= 0 else -1)
+            pts.append((cx + u * r, cy + v * r))
+
+    arc(x0 + w - r, y0 + r, -math.pi / 2, 0)            # 右上
+    arc(x0 + w - r, y0 + h - r, 0, math.pi / 2)         # 右下
+    arc(x0 + r, y0 + h - r, math.pi / 2, math.pi)       # 左下
+    arc(x0 + r, y0 + r, math.pi, 1.5 * math.pi)         # 左上
+    return pts
+
+
+def _squircle_photo(w: int, h: int, r: int, fill: str, ss: int = 4):
+    key = ("sq", w, h, r, fill)
+    if key in _IMG_CACHE:
+        return _IMG_CACHE[key]
+    img = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    poly = squircle_points(0, 0, w * ss - 1, h * ss - 1, r * ss)
+    d.polygon(poly, fill=fill)
+    img = img.resize((w, h), Image.LANCZOS)
+    photo = ImageTk.PhotoImage(img)
+    _IMG_CACHE[key] = photo
+    return photo
+
+
 def draw_round(canvas: tk.Canvas, x: int, y: int, w: int, h: int, r: int,
                fill: str, tag: str = "shape") -> None:
-    """在 canvas 上画一块抗锯齿圆角。没有 PIL 时退化为平滑多边形。"""
+    """在 canvas 上画一块抗锯齿的**超椭圆**圆角。没有 PIL 时退化为多边形。"""
     r = max(0, min(r, min(w, h) // 2))
     if HAS_PIL and w > 1 and h > 1:
-        canvas.create_image(x, y, image=_round_photo(w, h, r, fill), anchor="nw",
-                            tags=tag, state="normal")
+        canvas.create_image(x, y, image=_squircle_photo(w, h, r, fill), anchor="nw",
+                            tags=tag)
     else:
-        canvas.create_polygon(rr_points(x, y, x + w - 1, y + h - 1, r),
-                              smooth=True, splinesteps=24, fill=fill, tags=tag)
+        pts = squircle_points(x, y, w - 1, h - 1, r, steps=8)
+        canvas.create_polygon([c for p in pts for c in p], smooth=False,
+                              fill=fill, tags=tag)
 
 
 def rr_points(x1, y1, x2, y2, r):
@@ -130,6 +172,44 @@ class RoundCanvas(tk.Canvas):
     def set_fill(self, color: str):
         self._fill = color
         self._redraw()
+
+
+class ScrollFrame(tk.Frame):
+    """可滚动容器：内容超高时滚轮/拖动可滚，滚动条隐藏。"""
+
+    def __init__(self, master, *, bg=SURFACE):
+        super().__init__(master, bg=bg)
+        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0)
+        self.canvas.pack(fill="both", expand=True)
+        self.inner = tk.Frame(self.canvas, bg=bg)
+        self._win = self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
+        self.canvas.bind("<Configure>", self._sync)
+        self.inner.bind("<Configure>", self._region)
+
+    def _sync(self, event):
+        self.canvas.itemconfigure(self._win, width=event.width)
+        self.after_idle(self._region)
+
+    def _region(self, _e=None):
+        bbox = self.canvas.bbox("all")
+        if bbox:
+            self.canvas.configure(scrollregion=(0, 0, self.canvas.winfo_width(),
+                                                max(bbox[3], self.canvas.winfo_height())))
+
+    def scroll_by(self, delta: int):
+        first, last = self.canvas.yview()
+        if first <= 0.0 and last >= 1.0:
+            return False
+        self.canvas.yview_scroll(delta, "units")
+        return True
+
+    def contains(self, widget) -> bool:
+        w = widget
+        while w is not None:
+            if w is self or w is self.canvas or w is self.inner:
+                return True
+            w = getattr(w, "master", None)
+        return False
 
 
 class Card(tk.Frame):
@@ -267,15 +347,11 @@ class Toggle(tk.Canvas):
     def _paint(self, hovering=False):
         self.delete("all")
         track = ACCENT if self._on else (blend(SURFACE, .08) if hovering else SURFACE)
-        draw_round(self, 0, 0, self._cw, self._ch, self._ch // 2, track)
+        draw_round(self, 0, 0, self._cw, self._ch, 9, track)
         knob = self._ch - 8
         x = self._cw - knob - 4 if self._on else 4
         y = 4
-        if HAS_PIL:
-            photo = _round_photo(knob, knob, knob // 2, WHITE)
-            self.create_image(x, y, image=photo, anchor="nw")
-        else:
-            self.create_oval(x, y, x + knob, y + knob, fill=WHITE, outline="")
+        draw_round(self, x, y, knob, knob, 7, WHITE)
 
     def _toggle(self, _e=None):
         self._on = not self._on
@@ -329,11 +405,7 @@ class Slider(tk.Canvas):
         if x > 8:
             draw_round(self, 6, y - 3, x - 6, 6, 3, ACCENT)
         r = 7
-        if HAS_PIL:
-            photo = _round_photo(r * 2, r * 2, r, WHITE)
-            self.create_image(x - r, y - r, image=photo, anchor="nw")
-        else:
-            self.create_oval(x - r, y - r, x + r, y + r, fill=WHITE, outline="")
+        draw_round(self, x - r, y - r, r * 2, r * 2, 5, WHITE)
 
     def _drag(self, event):
         ratio = (event.x - 12) / max(1, self._cw - 24)
@@ -419,7 +491,13 @@ class App(tk.Tk):
         self.withdraw()
         self.overrideredirect(True)
         self.configure(bg=DEEP)
-        self.geometry("1080x700+%d+%d" % self._center(1080, 700))
+        _size = os.environ.get("CNA_TK_SIZE", "1080x700")
+        try:
+            _w, _h = (int(v) for v in _size.lower().split("x"))
+        except Exception:                               # noqa: BLE001
+            _w, _h = 1080, 700
+        self._init_size = (_w, _h)
+        self.geometry("%dx%d+%d+%d" % (_w, _h, *self._center(_w, _h)))
         self._drag = None
         self._views: dict[str, tk.Frame] = {}
         self._navs: dict[str, NavItem] = {}
@@ -429,10 +507,18 @@ class App(tk.Tk):
         self._tray = None
         self._pending_interval = int(engine.cfg.get("interval", 20))
         self._first_run = not self._has_credentials()
+        self._grips: dict[str, tk.Frame] = {}
+        self._grip = None
+        self._round_job = None
+        self._min_size = (900, 560)
+        self.minsize(*self._min_size)
 
         self._build()
+        self._install_grips()
+        self.bind("<Configure>", lambda e: e.widget is self and self._round_later())
         self.after(80, lambda: self._finish_show(start_hidden))
         self._start_tray()
+        self.bind_all("<MouseWheel>", self._on_wheel)
         threading.Thread(target=engine.run_forever, daemon=True).start()
         self._tick()
 
@@ -445,15 +531,78 @@ class App(tk.Tk):
         return max(0, (self.winfo_screenwidth() - w) // 2), max(0, (self.winfo_screenheight() - h) // 2 - 20)
 
     def _apply_rounding(self):
+        """窗口外轮廓也用超椭圆（和内部圆角同一形状）。"""
         try:
             self.update_idletasks()
             hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
             w, h = max(200, self.winfo_width()), max(200, self.winfo_height())
-            rgn = ctypes.windll.gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1,
-                                                         RADIUS_WIN * 2, RADIUS_WIN * 2)
+            pts = squircle_points(0, 0, w, h, RADIUS_WIN, steps=16)
+            flat = [int(v) for pt in pts for v in pt]
+            arr = (ctypes.c_long * len(flat))(*flat)
+            rgn = ctypes.windll.gdi32.CreatePolygonRgn(arr, len(pts), 2)
             ctypes.windll.user32.SetWindowRgn(hwnd, rgn, True)
         except Exception:                               # noqa: BLE001
             pass
+
+    def _round_later(self):
+        if self._round_job:
+            self.after_cancel(self._round_job)
+        self._round_job = self.after(120, self._apply_rounding)
+
+    # ------------------------------------------------------------ 拖动改尺寸
+    def _install_grips(self):
+        cursors = {"n": "size_ns", "s": "size_ns", "e": "size_we", "w": "size_we",
+                   "ne": "size_ne_sw", "sw": "size_ne_sw",
+                   "nw": "size_nw_se", "se": "size_nw_se"}
+        for name, cur in cursors.items():
+            f = tk.Frame(self, bg=DEEP, cursor=cur)
+            f.bind("<ButtonPress-1>", lambda e, n=name: self._grip_press(e, n))
+            f.bind("<B1-Motion>", self._grip_motion)
+            f.bind("<ButtonRelease-1>", lambda e: self._round_later())
+            self._grips[name] = f
+        self._place_grips()
+
+    def _place_grips(self):
+        g, c = 5, 10
+        G = self._grips
+        G["n"].place(x=0, y=0, relwidth=1, height=g)
+        G["s"].place(x=0, rely=1, y=-g, relwidth=1, height=g)
+        G["w"].place(x=0, y=0, width=g, relheight=1)
+        G["e"].place(relx=1, x=-g, y=0, width=g, relheight=1)
+        G["nw"].place(x=0, y=0, width=c, height=c)
+        G["ne"].place(relx=1, x=-c, y=0, width=c, height=c)
+        G["sw"].place(x=0, rely=1, y=-c, width=c, height=c)
+        G["se"].place(relx=1, x=-c, rely=1, y=-c, width=c, height=c)
+        for f in G.values():
+            f.lift()
+
+    def _grip_press(self, event, direction):
+        self._grip = {
+            "dir": direction, "sx": event.x_root, "sy": event.y_root,
+            "x": self.winfo_x(), "y": self.winfo_y(),
+            "w": self.winfo_width(), "h": self.winfo_height(),
+        }
+
+    def _grip_motion(self, event):
+        g = self._grip
+        if not g:
+            return
+        dx = event.x_root - g["sx"]
+        dy = event.y_root - g["sy"]
+        x, y, w, h = g["x"], g["y"], g["w"], g["h"]
+        d = g["dir"]
+        minw, minh = self._min_size
+        if "e" in d:
+            w = max(minw, w + dx)
+        if "s" in d:
+            h = max(minh, h + dy)
+        if "w" in d:
+            nw = max(minw, w - dx)
+            x, w = x + (w - nw), nw
+        if "n" in d:
+            nh = max(minh, h - dy)
+            y, h = y + (h - nh), nh
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _finish_show(self, start_hidden: bool):
         self.title("校园网助手")
@@ -462,6 +611,9 @@ class App(tk.Tk):
             return
         self.deiconify()
         self.lift()
+        w, h = self._init_size
+        x, y = self._center(w, h)
+        self.geometry("%dx%d+%d+%d" % (w, h, x, y))
         self.update_idletasks()
         self._apply_rounding()
         if self._first_run:
@@ -761,16 +913,16 @@ class App(tk.Tk):
 
     # 设置
     def _view_settings(self, parent):
-        outer = tk.Frame(parent, bg=SURFACE)
+        scroll = ScrollFrame(parent, bg=SURFACE)
+        if not hasattr(self, "_scrolls"):
+            self._scrolls = []
+        self._scrolls.append(scroll)
+        outer = scroll.inner
         self._page_head(outer, "设置", "修改后点底部保存生效")
-
-        bar = tk.Frame(outer, bg=SURFACE)
-        bar.pack(side="bottom", fill="x", padx=28, pady=10)
-        Button(bar, "保存设置", self._save_settings, bg=SURFACE, fill=ACCENT,
-               accent=True, width=140, height=36).pack(side="right")
+        outer.winfo_children()[0].pack_configure(pady=(12, 2))
 
         body = tk.Frame(outer, bg=SURFACE)
-        body.pack(fill="both", expand=True, padx=28, pady=(8, 0))
+        body.pack(fill="both", expand=True, padx=28, pady=(4, 0))
 
         tk.Label(body, text="账号", bg=SURFACE, fg=T3_S, font=F_SMALL_B,
                  anchor="w").pack(fill="x", pady=(0, 6))
@@ -809,10 +961,15 @@ class App(tk.Tk):
                  anchor="w").pack(fill="x", pady=(10, 4))
         pair = tk.Frame(body, bg=SURFACE)
         pair.pack(fill="x")
-        self.v_startup = self._make_switch(pair, "开机自动运行", "", side="left")
-        self.v_autoclose = self._make_switch(pair, "关闭时退出", "", side="left")
+        self.v_startup = self._make_switch(pair, "开机自启", "", side="left")
+        self.v_autoclose = self._make_switch(pair, "关闭退出", "", side="left")
 
-        return outer
+        bar = tk.Frame(outer, bg=SURFACE)
+        bar.pack(fill="x", padx=28, pady=(10, 12))
+        Button(bar, "保存设置", self._save_settings, bg=SURFACE, fill=ACCENT,
+               accent=True, width=140, height=36).pack(side="right")
+
+        return scroll
 
     def _field(self, parent, label, *, secret=False):
         tk.Label(parent, text=label, bg=SURFACE, fg=T2_S, font=F_SMALL,
@@ -970,6 +1127,15 @@ class App(tk.Tk):
             widget._paint()
 
     # ------------------------------------------------------------ 刷新
+    def _on_wheel(self, event):
+        for sf in getattr(self, "_scrolls", []):
+            try:
+                if sf.contains(event.widget) and sf.scroll_by(int(-event.delta / 120)):
+                    return "break"
+            except Exception:                           # noqa: BLE001
+                pass
+        return None
+
     def _tick(self):
         try:
             self._refresh()
