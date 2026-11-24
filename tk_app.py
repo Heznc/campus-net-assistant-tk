@@ -2012,10 +2012,14 @@ class App(tk.Tk):
                 self._icon_shown = True
                 self._set_window_icon()
                 self._taskbar_style()
-            if self.theme_mode == "system" and resolve_theme("system") != DARK:
-                set_palette(not DARK)
-                self._rebuild_ui()
-                return self.after(1000, self._tick)
+            # 跟随系统主题：每 5 秒才读一次注册表（每次约 0.15 ms）
+            self._theme_tick = getattr(self, "_theme_tick", 0) + 1
+            if (self.theme_mode == "system" and self._theme_tick >= 5):
+                self._theme_tick = 0
+                if resolve_theme("system") != DARK:
+                    set_palette(not DARK)
+                    self._rebuild_ui()
+                    return self.after(1000, self._tick)
             self._refresh()
         except Exception:                               # noqa: BLE001
             pass
