@@ -1080,7 +1080,9 @@ class App(tk.Tk):
 
             proc = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)(fix)
             u.EnumWindows(proc, 0)
-            self.engine.log("窗口图标已应用", "info")
+            if not getattr(self, "_icon_logged", False):
+                self._icon_logged = True
+                self.engine.log("窗口图标已应用", "info")
         except Exception as exc:                        # noqa: BLE001
             self.engine.log(f"设置窗口图标失败：{exc!r}", "warn")
 
@@ -2000,11 +2002,11 @@ class App(tk.Tk):
                 self.overrideredirect(True)
                 self.update_idletasks()
                 self._apply_rounding()
-                self._taskbar_style()
-                self._set_window_icon()
+                self._icon_shown = False
             elif self.state() == "normal" and not getattr(self, "_icon_shown", False):
                 self._icon_shown = True
                 self._set_window_icon()
+                self._taskbar_style()
             if self.theme_mode == "system" and resolve_theme("system") != DARK:
                 set_palette(not DARK)
                 self._rebuild_ui()
